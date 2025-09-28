@@ -13,44 +13,6 @@
 #   - Dashboard styling constants
 # ==============================================================================
 
-# ================= RISK LEVEL DEFINITIONS =================
-
-# Standardized risk categories in order from lowest to highest
-RISK_LEVELS = ['Very low', 'Low', 'Medium', 'High', 'Very high']
-
-# Probability thresholds for converting continuous probabilities to categories
-PROBABILITY_THRESHOLDS = {
-    'very_low': 0.0,
-    'low': 0.0000325,
-    'medium': 0.000106,
-    'high': 0.000343,
-    'very_high': 0.00111
-}
-
-# Systematic opacity levels based on risk severity
-OPACITY_LEVELS = {
-    'very_low': 68,    # Subtle visibility for minimal risk
-    'low': 68,        # Low visibility for minor risk
-    'medium': 118,     # Medium visibility for moderate risk
-    'high': 164,       # High visibility for significant risk
-    'very_high': 230   # Maximum visibility for critical risk
-}
-
-# Base colors (RGB) for each risk level
-BASE_COLORS = {
-    'Very low': [26, 29, 35],       # Dark gray for minimal risk
-    'Low': [127, 127, 0],         # Light yellow for low risk
-    'Medium': [255, 255, 0],        # Yellow for moderate risk
-    'High': [255, 127, 0],          # Orange for high risk
-    'Very high': [255, 0, 0]        # Red for critical risk
-}
-
-# Complete RGBA color definitions combining base colors with opacity
-RISK_COLORS = {
-    level: BASE_COLORS[level] + [OPACITY_LEVELS[level.lower().replace(' ', '_')]]
-    for level in RISK_LEVELS
-}
-
 # ================= MAP CONFIGURATION =================
 
 # Map display and interaction settings
@@ -106,87 +68,42 @@ UI_COLORS = {
 
 # ================= COLOR MAPPING FUNCTIONS =================
 
-def get_color_by_category(risk_category):
-    """Get RGBA color array for categorical risk level"""
-
-    return RISK_COLORS.get(risk_category, RISK_COLORS['Very low'])
-
-def probability_to_category(probability):
-    """Convert continuous probability to categorical risk level"""
-
-    prob = max(0, min(1, probability))
+def get_deck_color(risk_score):
+    """Get color for display based on risk score with interpolation"""
     
-    if prob >= PROBABILITY_THRESHOLDS['very_high']:
-        return 'Very high'
-    elif prob >= PROBABILITY_THRESHOLDS['high']:
-        return 'High'
-    elif prob >= PROBABILITY_THRESHOLDS['medium']:
-        return 'Medium'
-    elif prob >= PROBABILITY_THRESHOLDS['low']:
-        return 'Low'
-    else:
-        return 'Very low'
-
-def get_color_by_probability(probability, method='continuous'):
-    """Get color for probability value using specified mapping method"""
-
-    if method == 'categorical':
-        # Convert probability to category first, then get color
-        category = probability_to_category(probability)
-        return get_color_by_category(category)
-    else:
-        # Use continuous interpolation between color stops
-        return interpolate_color_continuous(probability)
-
-def interpolate_color_continuous(probability):
-    """Interpolate color along continuous gradient based on probability thresholds"""
-
-    # Clamp probability to valid range
-    prob = max(0, min(1, probability))
-    
-    # Create ordered threshold-color pairs for interpolation
+    # Define color stops with score thresholds
     color_stops = [
-        (PROBABILITY_THRESHOLDS['very_low'], RISK_COLORS['Very low']),
-        (PROBABILITY_THRESHOLDS['low'], RISK_COLORS['Low']),
-        (PROBABILITY_THRESHOLDS['medium'], RISK_COLORS['Medium']),
-        (PROBABILITY_THRESHOLDS['high'], RISK_COLORS['High']),
-        (PROBABILITY_THRESHOLDS['very_high'], RISK_COLORS['Very high'])
+        (0,   [26, 29, 35],   68),   # Very low
+        (25,  [127, 127, 0],  68),   # Low  
+        (50,  [255, 255, 0],  118),  # Medium
+        (75,  [255, 127, 0],  164),  # High
+        (100, [255, 0, 0],    230)   # Very high
     ]
     
-    # Find appropriate color stops for interpolation
+    # Find the two stops to interpolate between
     for i in range(len(color_stops) - 1):
-        pos1, color1 = color_stops[i]
-        pos2, color2 = color_stops[i + 1]
+        score1, color1, opacity1 = color_stops[i]
+        score2, color2, opacity2 = color_stops[i + 1]
         
-        if pos1 <= prob <= pos2:
-            # Calculate interpolation factor between stops
-            if pos2 == pos1:
-                t = 0
+        if score1 <= risk_score <= score2:
+            # Calculate interpolation factor (0 = first stop, 1 = second stop)
+            if score2 == score1:
+                t = 0  # Avoid division by zero
             else:
-                t = (prob - pos1) / (pos2 - pos1)
+                t = (risk_score - score1) / (score2 - score1)
             
-            # Linear interpolation for each RGBA component
+            # Interpolate RGB values
             r = int(color1[0] + t * (color2[0] - color1[0]))
             g = int(color1[1] + t * (color2[1] - color1[1]))
             b = int(color1[2] + t * (color2[2] - color1[2]))
-            a = int(color1[3] + t * (color2[3] - color1[3]))
+            
+            # Interpolate opacity
+            a = int(opacity1 + t * (opacity2 - opacity1))
             
             return [r, g, b, a]
     
-    # Fallback for probabilities outside defined range
-    return RISK_COLORS['Very high']
-
-#================= CHANGE THIS WHEN BASE RATE CORRECTION IS READY =================
-
-def get_temp_color(risk_category): # delete
-    """TEMPORARY: Map categorical risk levels to RGBA colors (legacy function)"""
-
-    return get_color_by_category(risk_category)
-
-def get_deck_color(probability):
-    """Convert crash probability to deck.gl RGBA color using continuous mapping"""
-
-    return get_color_by_probability(probability, method='continuous')
+    # Fallback to very low color
+    return [26, 29, 35, 68] 
 
 # ================= EXTERNAL RESOURCES =================
 

@@ -27,10 +27,9 @@ import psutil
 from shapely import wkt
 from datetime import datetime
 import pytz
+import numpy as np
 from config import get_deck_color, MAP_CONFIG, PERFORMANCE_CONFIG
-from prob_convert import load_converter, format_percent
 from bg_updater import BackgroundUpdater
-from config import get_temp_color # delete
 
 # ================= CONFIGURATION =================
 
@@ -129,10 +128,15 @@ class PredictionEngine:
         self.pipeline = DataPipeline()
         
         # Initialize crash prediction engine with loaded model
-        self.predictor = CrashPredictor(self.data_manager.get_model_artifact())
+        self.artifact = self.data_manager.get_model_artifact()
 
-        # Load probability converter for calibrated real-world risk estimates
-        self.prob_converter = load_converter()
+        self.predictor = CrashPredictor(self.artifact)
+        self.cutoff = self.artifact['cutoff']
+        self.filtered_probs_ref = self.artifact['filtered_probs_ref']
+
+        # Build percentile lookup table 
+        self.percentile_thresholds = self.build_percentile_lookup()
+
         logger.info("Prediction engine initialized")
     
     def generate_predictions(self):
@@ -164,41 +168,49 @@ class PredictionEngine:
         
         return cached_predictions
     
+    def build_percentile_lookup(self):
+        """Build percentile threshold lookup table from reference data"""
+
+        # Calculate the probability value for each percentile (0-100)
+        percentiles = np.arange(0, 101)
+        thresholds = np.percentile(self.filtered_probs_ref, percentiles)
+
+        return thresholds
+
+    def score_risk(self, sample, ):
+        """Assign risk score based on pre-computed percentile lookup"""
+        
+        # Fast lookup using searchsorted 
+        risk_scores = np.searchsorted(self.percentile_thresholds, sample['crash_probability'], side='right') - 1
+        
+        # Add risk scores to the sample
+        sample['risk_score'] = risk_scores.astype(int)
+        
+        return sample
+
     def filter_predictions(self):
-        """Filter predictions to focus on segments with elevated crash risk"""
+        """Filter and score segments with elevated crash risk"""
 
         # Check cache first
         cached_sample = self.data_manager.get_cached_sample()
         
-#================= CHANGE THIS WHEN BASE RATE CORRECTION IS READY =================
-        # uncomment-------------------------------------------------------------
-        # if cached_sample is None:
-        #     predictions = self.generate_predictions()
-            
-        #     logger.info("Filtering predictions by probability threshold...")
-        #     sample = predictions[
-        #         predictions['crash_probability'] >= 0.08 # Filter out low risk (arbitrary cutoff)
-        #     ].copy()
-        #     logger.info(f"Filtered to {len(sample)} segments")
-        #     self.data_manager.cache_sample(sample)
-        #     return sample
-        # uncomment-------------------------------------------------------------
-
-        # delete----------------------------------------------------------------
         if cached_sample is None:
             predictions = self.generate_predictions()
             
-            # Filter out segments with very low risk (for speed)
-            logger.info("Filtering predictions by risk threshold...")
+            # Filter out segments with low risk (for speed)
+            logger.info(f"Filtering for predictions with prob > {self.cutoff:6f}")
             sample = predictions[
-                predictions['risk_category'] != 'Very low' # Filter out low risk (arbitrary cutoff)
+                predictions['crash_probability'] >= self.cutoff # Filter out bottom portion (based on knee point)
             ].copy()
             logger.info(f"Filtered to {len(sample)} segments")
+
+            logger.info(f"Scoring segments...")
+            sample = self.score_risk(sample)
+
             self.data_manager.cache_sample(sample)
             return sample
         
         return cached_sample
-        # delete----------------------------------------------------------------
 
 # ================= MAP RENDERER CLASS =================
 
@@ -213,9 +225,6 @@ class MapRenderer:
         
     def create_deck_map(self, filtered_predictions):
         """Convert prediction data to deck.gl PathLayer format for visualization"""
-
-        # Extract probability values for color mapping
-        probs = filtered_predictions['crash_probability']
         
         deck_data = []
         for _, row in filtered_predictions.iterrows():
@@ -223,22 +232,14 @@ class MapRenderer:
             geom = wkt.loads(row['geometry'])
             if geom.geom_type == 'LineString':
                 coords = [[point[0], point[1]] for point in geom.coords]
-                
-#================= CHANGE THIS WHEN BASE RATE CORRECTION IS READY =================
-
-                # model_prob = row['crash_probability'] # uncomment
-                # absolute_prob = self.prediction_engine.prob_converter.convert(model_prob) # uncomment
-
-                # # Map probability to color 
-                # color = get_deck_color(absolute_prob) # uncomment
-
-                risk = row['risk_category'] # delete
-                color = get_temp_color(risk) # delete
+    
+                risk = row['risk_score'] 
+                color = get_deck_color(risk) 
                 
                 # Create individual path layer data with styling and metadata
                 deck_data.append({
                 'path': coords,
-                'probability_text': risk, # change to format_percent(absolute_prob),
+                'probability_text': row['risk_score'], 
                 'full_name': row['full_name'],
                 'color': color,
                 'width': MAP_CONFIG['path_width']

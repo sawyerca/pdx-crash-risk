@@ -17,7 +17,7 @@
 
 from dash import dcc, html
 import dash_deck
-from config import UI_CONFIG, UI_COLORS, get_color_by_category
+from config import UI_CONFIG, UI_COLORS, get_deck_color
 
 # ================= COMPONENT FUNCTIONS =================
 
@@ -169,7 +169,7 @@ def create_map():
                 id='crash-heatmap',  # Primary map component for callbacks
                 data={},  # Data populated by callbacks
                 tooltip={
-                'html': '<b>Risk:</b> {probability_text}<br><b>Street:</b> {full_name}',
+                'html': '<b>Risk Score:</b> {probability_text}<br><b>Street:</b> {full_name}',
                  'style': {'backgroundColor': UI_COLORS['background_dark'], 'color': 'white'}
                  },
                 style={'height': '100vh', 'width': '100%', 'margin': '0 auto'},
@@ -183,10 +183,11 @@ def create_map():
         html.Div([
             html.H4("Crash Risk", style={'margin': '0 0 10px 0', 'fontSize': '14px'}),
             # Legend items with corresponding colors from visualization
-            create_legend_item(get_color_by_category('Low'), "Low"), 
-            create_legend_item(get_color_by_category('Medium'), "Medium"),
-            create_legend_item(get_color_by_category('High'), "High"),
-            create_legend_item(get_color_by_category('Very high'), "Very High")
+            create_legend_item(get_deck_color(0), "Very Low"), 
+            create_legend_item(get_deck_color(25), "Low"), 
+            create_legend_item(get_deck_color(50), "Medium"),
+            create_legend_item(get_deck_color(75), "High"),
+            create_legend_item(get_deck_color(100), "Very High")
         ], style=legend_style),
 
         # Notification for data updates (hidden by default)
@@ -225,7 +226,7 @@ def create_map():
                     'fontSize': '13px'
                 }),
                 # Model methodology explanation
-                html.P("This map displays predicted crash risk for Portland street segments using a machine learning model (XGBoost) trained on historical crash and weather data (2019-2024). Each colored line represents a street segment, with colors indicating categorical risk levels from low (yellow) to very high (red) for the selected hour. The model incorporates factors including current weather conditions, time of day, day of week, and historical crash patterns for each location. Only segments with elevated risk (low risk and above) are displayed. Risk categories are derived from calibrated model probabilities using isotonic regression.", style={
+                html.P("This map displays predicted crash risk for Portland street segments using an XGBoost model trained on historical crash and weather data (2019-2023). Each colored line represents a street segment, with colors indicating percentile-based risk scores (0-100) from very low (dark gray) to very high (red) for the selected hour. The model predicts hourly crash occurrence probability by incorporating real-time weather conditions, temporal patterns (time of day, day of week), street characteristics, and historical crash patterns for each segment. Only segments with elevated risk above a calculated threshold (knee point) are displayed. Risk scores represent percentile rankings within this filtered population of higher-risk segments.", style={
                     'margin': '0 0 8px 0',
                     'fontSize': '11px',
                     'lineHeight': '1.4'

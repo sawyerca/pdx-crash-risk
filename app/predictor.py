@@ -1,8 +1,8 @@
 # ==============================================================================
 # Crash Prediction Engine
 # ==============================================================================
-# Purpose: Generate calibrated crash probabilities for street segments using
-#          trained XGBoost model with chunked processing for memory efficiency
+# Purpose: Generate crash probabilities for street segments using trained
+#           XGBoost model with chunked processing for memory efficiency 
 # 
 # Input Files:
 #   - ../models/crash_model.pkl: Trained crash prediction model
@@ -17,7 +17,7 @@
 import pickle
 import logging
 import pandas as pd
-import numpy as np # delete
+import numpy as np 
 
 # ================= CONFIGURATION =================
 
@@ -34,7 +34,7 @@ OPT_DTYPES = {
     'crash_probability': 'float32',
     'geometry': 'string',
     'full_name': 'string',
-    'risk_category': pd.CategoricalDtype(['Very low', 'Low', 'Medium', 'High', 'Very high'], ordered=True)
+    'risk_score': 'int8'
 }
 
 # ================= MODEL LOADING =================
@@ -48,30 +48,13 @@ def load_model(model_path):
 
     return model_artifact
 
-#================= CHANGE THIS WHEN BASE RATE CORRECTION IS READY =================
-def classify_risk(calibrated_probs): # delete
-    """TEMPORARY FUNCTION TO CLASSIFY PROBS"""
-
-    conditions = [
-        (calibrated_probs >= 0.9),   
-        (calibrated_probs >= 0.8),    
-        (calibrated_probs >= 0.5),   
-        (calibrated_probs >= 0.1),  
-        (calibrated_probs >= 0)     
-    ]
-    
-    choices = ['Very high', 'High', 'Medium', 'Low', 'Very low']
-    
-    return np.select(conditions, choices, default='low')
 
 # ================= PREDICTION ENGINE =================
 
 class CrashPredictor:
     """
-    Generates calibrated crash probabilities for street segments using model.
-    
-    Processes data in chunks to handle large datasets while maintaining memory
-    constraints. Applies both XGBoost predictions and isotonic calibration.
+    Generates crash probabilities for street segments using model. Uses Box-Cox
+    transformed values with empirical CDF to assign a risk score.
     """
     
     def __init__(self, model_artifact):
@@ -80,16 +63,15 @@ class CrashPredictor:
         # Extract model components from artifact
         self.model_artifact = model_artifact
         self.model = model_artifact['model']
-        self.calibrator = model_artifact['calibrator'] 
         self.feature_cols = model_artifact['feature_cols']
-
+    
     def predict(self, data_generator):
         """Generate calibrated crash probabilities with chunking"""
 
         # Initialize vars
         all_predictions = []
         chunk_count = 0
-        
+
         # Process each data chunk from generator
         for chunk_count, merged_chunk in enumerate(data_generator, 1):
             
@@ -106,25 +88,25 @@ class CrashPredictor:
                 # Extract features and generate predictions
                 X = hour_data[self.feature_cols]
                 raw_probs = self.model.predict_proba(X)[:, 1]
-                calibrated_probs = self.calibrator.transform(raw_probs)
-
-#================= CHANGE THIS WHEN BASE RATE CORRECTION IS READY =================
-                risk_category = classify_risk(calibrated_probs) # delete
                 
-                # Create output with essential columns and optimized data types
+                # Create output with essential columns
                 predictions = pd.DataFrame({
                     'segment_id': hour_data['segment_id'],
                     'geometry': hour_data['geometry'], 
                     'full_name': hour_data['full_name'],
                     'datetime': hour_data['datetime'],
-                    'crash_probability': calibrated_probs,
-                    'risk_category': risk_category # delete
+                    'crash_probability': raw_probs
                 })
 
+                # Apply all optimized dtypes 
+                for col, dtype in OPT_DTYPES.items():
+                    if col in predictions.columns:
+                        predictions[col] = predictions[col].astype(dtype)
+                        
                 chunk_predictions.append(predictions)
                 
                 # Clean up intermediate variables
-                del hour_data, X, raw_probs, calibrated_probs
+                del hour_data, X, raw_probs
             
             # Combine predictions for this chunk
             if chunk_predictions:
@@ -138,14 +120,6 @@ class CrashPredictor:
         # Combine all chunks into final prediction set
         logger.info("Combining all prediction chunks...")
         final_predictions = pd.concat(all_predictions, ignore_index=True)
-        
-        # Apply all optimized dtypes 
-        for col, dtype in OPT_DTYPES.items():
-            if col in final_predictions.columns:
-                if col == 'risk_category': # delete
-                    final_predictions[col] = pd.Categorical(final_predictions[col], dtype=dtype) # delete
-                else:
-                    final_predictions[col] = final_predictions[col].astype(dtype)
 
         # Add memory breakdown
         memory_usage = final_predictions.memory_usage(deep=True)
@@ -172,5 +146,3 @@ if __name__ == '__main__':
     predictor = CrashPredictor(model)
 
     test_predictions = predictor.predict(merged_data)
-
-    test_predictions = test_predictions[test_predictions['datetime'].dt.hour == 17]

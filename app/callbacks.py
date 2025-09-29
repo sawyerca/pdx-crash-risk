@@ -13,7 +13,7 @@
 #
 # Output:
 #   - Interactive web dashboard with real-time crash risk visualization
-#   - Cached prediction data and pre-generated map layers
+#   - Lightweight hourly data with on-demand map generation
 # ==============================================================================
 
 # ================= IMPORTS =================
@@ -28,8 +28,10 @@ from shapely import wkt
 from datetime import datetime
 import pytz
 import numpy as np
+import time
 from config import get_deck_color, MAP_CONFIG, PERFORMANCE_CONFIG
 from bg_updater import BackgroundUpdater
+
 
 # ================= CONFIGURATION =================
 
@@ -62,9 +64,12 @@ class DataManager:
         # Load historical segment-level crash statistics for model features
         self.seg_stats = pd.read_parquet('../data/segment_stats.parquet')
         
-        # Initialize data caches 
-        self.cached_predictions = None  
-        self.cached_sample = None       
+        # Initialize data caches
+        self.cached_predictions = None  # Temporary: deleted after filtering
+        self.cached_sample = None       # Temporary: deleted after hourly data extraction
+        self.cached_available_hours = None  # Permanent: lightweight hour list for UI
+        self.parsed_geometry = None     # Permanent: segment_id → coordinate arrays
+        self.hourly_data = None         # Permanent: lightweight hourly risk data
         
         logger.info("Data manager initialized successfully")
     
@@ -89,14 +94,29 @@ class DataManager:
         return self.seg_stats
     
     def cache_predictions(self, predictions):
-        """Cache full prediction dataset"""
+        """Cache full prediction dataset (temporary storage)"""
 
         self.cached_predictions = predictions
     
     def cache_sample(self, sample):
-        """Cache filtered sample dataset"""
+        """Cache filtered sample dataset (temporary storage)"""
 
         self.cached_sample = sample
+    
+    def cache_available_hours(self, hours):
+        """Cache list of available hours for UI components"""
+
+        self.cached_available_hours = hours
+    
+    def cache_parsed_geometry(self, geometry_dict):
+        """Cache parsed geometry lookup for fast map generation"""
+
+        self.parsed_geometry = geometry_dict
+    
+    def cache_hourly_data(self, hourly_dict):
+        """Cache lightweight hourly risk data for on-demand map generation"""
+
+        self.hourly_data = hourly_dict
     
     def get_cached_predictions(self):
         """Return cached predictions if available"""
@@ -108,11 +128,29 @@ class DataManager:
 
         return self.cached_sample
     
+    def get_cached_available_hours(self):
+        """Return cached list of available hours"""
+
+        return self.cached_available_hours
+    
+    def get_parsed_geometry(self):
+        """Return parsed geometry lookup dict"""
+
+        return self.parsed_geometry
+    
+    def get_hourly_data(self):
+        """Return hourly risk data dict"""
+
+        return self.hourly_data
+    
     def clear_cache(self):
         """Clear all cached data to force fresh generation"""
 
         self.cached_predictions = None
         self.cached_sample = None
+        self.cached_available_hours = None
+        self.parsed_geometry = None
+        self.hourly_data = None
 
 # ================= PREDICTION ENGINE CLASS =================
 
@@ -138,6 +176,15 @@ class PredictionEngine:
         self.percentile_thresholds = self.build_percentile_lookup()
 
         logger.info("Prediction engine initialized")
+    
+    def build_percentile_lookup(self):
+        """Build percentile threshold lookup table from reference data"""
+
+        # Calculate the probability value for each percentile (0-100)
+        percentiles = np.arange(0, 101)
+        thresholds = np.percentile(self.filtered_probs_ref, percentiles)
+
+        return thresholds
     
     def generate_predictions(self):
         """Generate crash predictions for all segments and time periods"""
@@ -168,16 +215,7 @@ class PredictionEngine:
         
         return cached_predictions
     
-    def build_percentile_lookup(self):
-        """Build percentile threshold lookup table from reference data"""
-
-        # Calculate the probability value for each percentile (0-100)
-        percentiles = np.arange(0, 101)
-        thresholds = np.percentile(self.filtered_probs_ref, percentiles)
-
-        return thresholds
-
-    def score_risk(self, sample, ):
+    def score_risk(self, sample):
         """Assign risk score based on pre-computed percentile lookup"""
         
         # Fast lookup using searchsorted 
@@ -189,7 +227,7 @@ class PredictionEngine:
         return sample
 
     def filter_predictions(self):
-        """Filter and score segments with elevated crash risk"""
+        """Filter predictions to focus on segments with elevated crash risk"""
 
         # Check cache first
         cached_sample = self.data_manager.get_cached_sample()
@@ -221,29 +259,91 @@ class MapRenderer:
         """Initialize map renderer with prediction engine reference"""
         
         self.prediction_engine = prediction_engine
-        self.pregenerated_maps = {}
+        self.data_manager = prediction_engine.data_manager
         
-    def create_deck_map(self, filtered_predictions):
-        """Convert prediction data to deck.gl PathLayer format for visualization"""
+    def parse_geometry(self, filtered_predictions):
+        """Parse WKT geometry strings once and cache coordinate arrays by segment_id"""
         
-        deck_data = []
-        for _, row in filtered_predictions.iterrows():
-            # Convert Well-Known Text geometry to coordinate arrays
+        logger.info("Parsing geometry strings to coordinate arrays...")
+        start_time = time.time()
+        
+        geometry_dict = {}
+        
+        # Get unique segments to avoid parsing duplicates across time periods
+        unique_segments = filtered_predictions[['segment_id', 'geometry', 'full_name']].drop_duplicates(subset='segment_id')
+        
+        for _, row in unique_segments.iterrows():
             geom = wkt.loads(row['geometry'])
             if geom.geom_type == 'LineString':
+                # Store coordinate array and metadata by segment_id
                 coords = [[point[0], point[1]] for point in geom.coords]
+                geometry_dict[row['segment_id']] = {
+                    'coords': coords,
+                    'full_name': row['full_name']
+                }
+        
+        elapsed = time.time() - start_time
+        logger.info(f"Parsed {len(geometry_dict)} unique segments in {elapsed:.3f} seconds")
+        
+        return geometry_dict
     
-                risk = row['risk_score'] 
-                color = get_deck_color(risk) 
+    def extract_hourly_data(self, filtered_predictions):
+        """Extract lightweight hourly risk data indexed by hour"""
+        
+        logger.info("Extracting hourly risk data...")
+        start_time = time.time()
+        
+        hourly_dict = {}
+        available_hours = sorted(filtered_predictions['datetime'].unique())
+        
+        for i, hour in enumerate(available_hours):
+            hour_data = filtered_predictions[filtered_predictions['datetime'] == hour]
+            
+            # Store only essential data: list of (segment_id, risk_score) tuples
+            hourly_dict[i] = hour_data[['segment_id', 'risk_score']].to_dict('records')
+        
+        elapsed = time.time() - start_time
+        logger.info(f"Extracted {len(hourly_dict)} hours of data in {elapsed:.3f} seconds")
+        
+        return hourly_dict, available_hours
+    
+    def generate_map(self, hour_index):
+        """Generate deck.gl map on-demand by combining cached geometry with hourly data"""
+        
+        # Retrieve cached data
+        geometry_dict = self.data_manager.get_parsed_geometry()
+        hourly_dict = self.data_manager.get_hourly_data()
+        
+        # Validate data availability
+        if not geometry_dict or not hourly_dict:
+            logger.error("Missing cached data for map generation")
+            return {}
+        
+        if hour_index not in hourly_dict:
+            logger.error(f"Hour index {hour_index} not found in hourly data")
+            return {}
+        
+        # Get segments for this hour
+        hour_segments = hourly_dict[hour_index]
+        
+        # Build deck.gl data by combining geometry with risk scores
+        deck_data = []
+        for segment_info in hour_segments:
+            segment_id = segment_info['segment_id']
+            risk_score = segment_info['risk_score']
+            
+            # Lookup pre-parsed geometry
+            if segment_id in geometry_dict:
+                geom_info = geometry_dict[segment_id]
+                color = get_deck_color(risk_score)
                 
-                # Create individual path layer data with styling and metadata
                 deck_data.append({
-                'path': coords,
-                'probability_text': row['risk_score'], 
-                'full_name': row['full_name'],
-                'color': color,
-                'width': MAP_CONFIG['path_width']
-            })
+                    'path': geom_info['coords'],
+                    'probability_text': risk_score,
+                    'full_name': geom_info['full_name'],
+                    'color': color,
+                    'width': MAP_CONFIG['path_width']
+                })
         
         # Return complete deck.gl map configuration
         return {
@@ -271,59 +371,49 @@ class MapRenderer:
             "mapStyle": MAP_CONFIG['map_style']
         }
     
-    def pregenerate_all_maps(self):
-        """Pre-generate deck.gl visualization maps for all available hours with memory monitoring"""
+    def prepare_data(self):
+        """Prepare lightweight data structures for fast on-demand map generation"""
         
         # Log initial system memory state
         ram_start = psutil.virtual_memory()
-        logger.info(f"Starting map pre-generation - RAM: {ram_start.percent:.1f}% used, {ram_start.available / 1024**3:.1f} GB available")
+        logger.info(f"Starting data preparation - RAM: {ram_start.percent:.1f}% used, {ram_start.available / 1024**3:.1f} GB available")
         
-        # Get filtered prediction dataset for map generation
+        # Get filtered prediction dataset
         filtered_predictions = self.prediction_engine.filter_predictions()
         
-        # Log memory usage after data loading
-        ram_after_sample = psutil.virtual_memory()
-        logger.info(f"After loading sample predictions - RAM: {ram_after_sample.percent:.1f}% used")
+        # Parse geometry once and cache
+        geometry_dict = self.parse_geometry(filtered_predictions)
+        self.data_manager.cache_parsed_geometry(geometry_dict)
         
-        # Get temporal scope for map generation
-        available_hours = self.get_available_hours()
-        logger.info(f"Pre-generating {len(available_hours)} maps...")
-
-        # Generate interactive map for each available hour
-        for i, hour in enumerate(available_hours):
-            logger.info(f"Generating map {i+1}/{len(available_hours)} for hour: {pd.to_datetime(hour).strftime('%I %p')}")
-            
-            # Filter predictions to specific hour for focused visualization
-            hour_predictions = filtered_predictions[
-                filtered_predictions['datetime'] == hour
-            ].copy()
-            
-            # Create deck.gl map layer with risk-based styling
-            deck_map = self.create_deck_map(hour_predictions)
-            self.pregenerated_maps[i] = deck_map
-            
-            # Periodic memory monitoring during generation process
-            if (i + 1) % PERFORMANCE_CONFIG['pregeneration_batch_size'] == 0:
-                ram_current = psutil.virtual_memory()
-                logger.info(f"Progress: {i+1}/{len(available_hours)} maps - RAM: {ram_current.percent:.1f}% used")
+        # Extract lightweight hourly data
+        hourly_dict, available_hours = self.extract_hourly_data(filtered_predictions)
+        self.data_manager.cache_hourly_data(hourly_dict)
+        self.data_manager.cache_available_hours(available_hours)
         
-        # Log final memory state and generation statistics
+        logger.info(f"Cached {len(available_hours)} available hours for UI")
+        
+        # Delete prediction caches to free memory
+        logger.info("Data prepared - clearing prediction caches to free memory")
+        self.data_manager.cached_predictions = None
+        self.data_manager.cached_sample = None
+        
+        # Force garbage collection to reclaim memory immediately
+        import gc
+        gc.collect()
+        
+        # Log final memory state
         ram_final = psutil.virtual_memory()
-        logger.info(f"Pre-generation complete! Generated {len(self.pregenerated_maps)} maps")
+        logger.info(f"Data preparation complete!")
         logger.info(f"Final RAM usage: {ram_final.percent:.1f}% used, {ram_final.available / 1024**3:.1f} GB available")
+        logger.info(f"Memory freed: {(ram_start.percent - ram_final.percent):.1f}% ({(ram_start.used - ram_final.used) / 1024**3:.1f} GB)")
 
     def get_available_hours(self):
-        """Extract sorted list of available prediction hours from cached data"""
+        """Extract sorted list of available prediction hours from cached hours list"""
 
-        cached_sample = self.prediction_engine.data_manager.get_cached_sample()
-        if cached_sample is not None:
-            return sorted(cached_sample['datetime'].unique())
+        cached_hours = self.data_manager.get_cached_available_hours()
+        if cached_hours is not None:
+            return cached_hours
         return []
-    
-    def get_pregenerated_map(self, hour_index):
-        """Retrieve pre-generated map for specified hour index"""
-
-        return self.pregenerated_maps.get(hour_index, {})
 
 # ================= MAIN APPLICATION CLASS =================
 
@@ -340,8 +430,8 @@ class CrashRiskApp:
         self.prediction_engine = PredictionEngine(self.data_manager)
         self.map_renderer = MapRenderer(self.prediction_engine)
         
-        # Pre-generate all visualization maps to minimize user wait times
-        self.map_renderer.pregenerate_all_maps()
+        # Prepare lightweight data structures for fast map generation
+        self.map_renderer.prepare_data()
 
         # Initialize and start background data refresh system
         self.background_updater = BackgroundUpdater(self)
@@ -359,10 +449,10 @@ class CrashRiskApp:
 
         return self.prediction_engine.filter_predictions()
     
-    def create_deck_map(self, filtered_predictions):
-        """Delegate map creation to map renderer"""
+    def generate_map(self, hour_index):
+        """Delegate fast on-demand map generation to map renderer"""
 
-        return self.map_renderer.create_deck_map(filtered_predictions)
+        return self.map_renderer.generate_map(hour_index)
     
     def get_available_hours(self):
         """Delegate hour retrieval to map renderer"""
@@ -394,16 +484,28 @@ class CrashRiskApp:
         self.data_manager.cache_sample(value)
     
     @property
-    def pregenerated_maps(self):
-        """Property accessor for pregenerated maps"""
+    def parsed_geometry(self):
+        """Property accessor for parsed geometry"""
 
-        return self.map_renderer.pregenerated_maps
+        return self.data_manager.get_parsed_geometry()
     
-    @pregenerated_maps.setter
-    def pregenerated_maps(self, value):
-        """Property setter for pregenerated maps"""
+    @parsed_geometry.setter
+    def parsed_geometry(self, value):
+        """Property setter for parsed geometry"""
 
-        self.map_renderer.pregenerated_maps = value
+        self.data_manager.cache_parsed_geometry(value)
+    
+    @property
+    def hourly_data(self):
+        """Property accessor for hourly data"""
+
+        return self.data_manager.get_hourly_data()
+    
+    @hourly_data.setter
+    def hourly_data(self, value):
+        """Property setter for hourly data"""
+
+        self.data_manager.cache_hourly_data(value)
     
     def create_hour_marks(self):
         """Generate slider marks for hour selection interface"""
@@ -429,30 +531,6 @@ class CrashRiskApp:
             }
         
         return marks
-    
-    def filter_by_hour(self, hour_index):
-        """Filter cached predictions to specific hour based on slider index"""
-        
-        cached_sample = self.data_manager.get_cached_sample()
-        if cached_sample is None:
-            return pd.DataFrame()
-        
-        hours = self.get_available_hours()
-        
-        # Adjust index to account for skipped first hour
-        actual_index = hour_index + 1
-        
-        # Validate index bounds
-        if actual_index >= len(hours):
-            return pd.DataFrame()
-        
-        # Filter data to selected time period
-        selected_hour = hours[actual_index]
-        filtered = cached_sample[
-            cached_sample['datetime'] == selected_hour
-        ].copy()
-        
-        return filtered
 
 # Initialize the main application instance for callback registration
 crash_app = CrashRiskApp()
@@ -461,9 +539,6 @@ crash_app = CrashRiskApp()
 
 def register_callbacks(app):
     """Register all dashboard callbacks for interactive functionality"""
-    
-    # Generate and cache the filtered prediction dataset on startup
-    crash_app.filter_predictions()
     
     @app.callback(
         [Output('hour-slider', 'marks'),
@@ -488,8 +563,8 @@ def register_callbacks(app):
         [Input('hour-slider', 'value')]
     )
     def update_heatmap(hour_index):
-        """Update map visualization based on selected hour"""
-        return crash_app.map_renderer.get_pregenerated_map(hour_index)
+        """Update map visualization based on selected hour using fast on-demand generation"""
+        return crash_app.generate_map(hour_index)
    
     @app.callback(
         Output('refresh-notification', 'style'),

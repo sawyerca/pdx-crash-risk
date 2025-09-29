@@ -21,22 +21,6 @@ from config import UI_CONFIG, UI_COLORS, get_deck_color
 
 # ================= COMPONENT FUNCTIONS =================
 
-def create_legend_item(color, label):
-    """Create individual legend item with color box and risk level label"""
-    
-    return html.Div([
-        # Color indicator box
-        html.Div(style={
-            'width': '20px', 
-            'height': '6px', 
-            'backgroundColor': f"rgba({color[0]},{color[1]},{color[2]},{color[3]/255})",
-            'display': 'inline-block', 
-            'marginRight': '8px'
-        }),
-        # Risk level text label
-        html.Span(label, style={'fontSize': '11px'})
-    ], style={'marginBottom': '5px'})
-
 def create_attribution_link(text, link_text, url):
     """Create data source attribution with clickable link"""
     
@@ -149,7 +133,7 @@ def create_map():
         'position': 'absolute',
         'top': UI_CONFIG['legend_position']['top'],
         'right': UI_CONFIG['legend_position']['right'],
-        'backgroundColor': 'rgba(15, 23, 42, 0.9)',
+        'backgroundColor': UI_COLORS['background_dark'],
         'padding': '15px',
         'borderRadius': '8px',
         'border': f"1px solid {UI_COLORS['border_gray']}",
@@ -157,7 +141,7 @@ def create_map():
         'fontSize': '12px',
         'fontFamily': 'Inter',
         'zIndex': 1000,
-        'minWidth': '150px'
+        'minWidth': '80px'
     }
     
     return html.Div([
@@ -179,16 +163,33 @@ def create_map():
             type="default",
         ),
         
-        # Risk level legend overlay
+        # Risk level legend overlay with gradient visualization
         html.Div([
-            html.H4("Crash Risk", style={'margin': '0 0 10px 0', 'fontSize': '14px'}),
-            # Legend items with corresponding colors from visualization
-            create_legend_item(get_deck_color(0), "Very Low"), 
-            create_legend_item(get_deck_color(25), "Low"), 
-            create_legend_item(get_deck_color(50), "Medium"),
-            create_legend_item(get_deck_color(75), "High"),
-            create_legend_item(get_deck_color(100), "Very High")
-        ], style=legend_style),
+            html.H4("Risk Score", style={'margin': '0 0 10px 0', 'fontSize': '14px'}),
+            
+            # Gradient bar with numerical scale
+            html.Div([
+                # Gradient bar
+                html.Div(style={
+                    'width': '30px',
+                    'height': '150px',
+                    'background': 'linear-gradient(to top, rgba(26,29,35,0.27) 0%, rgba(127,127,0,0.27) 25%, rgba(255,255,0,0.46) 50%, rgba(255,127,0,0.64) 75%, rgba(255,0,0,0.9) 100%)', 
+                    'borderRadius': '4px',
+                    'marginRight': '10px',
+                    'overflow': 'hidden'
+                }),
+                
+                # Numerical labels
+                html.Div([
+                    html.Div('99', style={'position': 'absolute', 'top': '-5px', 'fontSize': '11px'}),
+                    html.Div('75', style={'position': 'absolute', 'top': '32.5px', 'fontSize': '11px'}),
+                    html.Div('50', style={'position': 'absolute', 'top': '70px', 'fontSize': '11px'}),
+                    html.Div('25', style={'position': 'absolute', 'top': '107.5px', 'fontSize': '11px'}),
+                    html.Div('0', style={'position': 'absolute', 'top': '145px', 'fontSize': '11px'})  
+                ], style={'position': 'relative', 'height': '150px'})
+                
+            ], style={'display': 'flex', 'alignItems': 'flex-start'})
+        ], style=legend_style),  
 
         # Notification for data updates (hidden by default)
         html.Div(

@@ -1,7 +1,7 @@
 # ==============================================================================
 # Background Update System for Crash Prediction Dashboard
 # ==============================================================================
-# Purpose: Handle hourly data refresh with two-phase update process to ensure
+# Purpose: Handle hourly data refresh with lightweight data preparation to ensure
 #          fresh predictions without interrupting user experience
 # 
 # Input Files:
@@ -9,7 +9,7 @@
 #   - Street segments and crash statistics from data files
 #
 # Output:
-#   - Updated prediction data and pre-generated map cache
+#   - Updated lightweight prediction data for on-demand map generation
 # ==============================================================================
 
 # ================= IMPORTS =================
@@ -20,6 +20,7 @@ from datetime import datetime
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+import time
 
 # ================= CONFIGURATION =================
 
@@ -33,7 +34,7 @@ logger = logging.getLogger(__name__)
 # ================= BACKGROUND UPDATE MANAGER =================
 
 class BackgroundUpdater:
-    """Handles scheduled background updates of crash predictions and visualization maps"""
+    """Handles scheduled background updates of crash predictions with lightweight data preparation"""
     
     def __init__(self, crash_app):
         """Initialize background updater with crash application instance"""
@@ -48,9 +49,10 @@ class BackgroundUpdater:
         self.update_status = "initializing"
         self.error_message = None
         
-        # Prepared data staging area for atomic updates
-        self.prepared_sample = None
-        self.prepared_maps = None
+        # Prepared data staging area for atomic updates (lightweight structures)
+        self.prepared_geometry = None
+        self.prepared_hourly_data = None
+        self.prepared_available_hours = None
     
     def start(self):
         """Start the background scheduler with two-phase update process"""
@@ -82,7 +84,7 @@ class BackgroundUpdater:
             self.set_error(str(e))
     
     def prepare_update(self):
-        """Preparation phase: Generate new predictions and maps"""
+        """Generate new predictions and prepare data structures"""
 
         logger.info("Starting preparation phase - fetching fresh data...")
         self.update_status = "preparing"
@@ -97,52 +99,76 @@ class BackgroundUpdater:
                 logger.info("Generating fresh predictions with current weather data")
                 new_sample = self.crash_app.filter_predictions()
                 
-                # Pre-generate all maps
-                logger.info("Pre-generating visualization maps for all hours")
-                new_maps = self.generate_maps(new_sample)
+                # Prepare lightweight data structures for on-demand map generation
+                logger.info("Preparing lightweight data structures")
+                geometry_dict = self.parse_geometry(new_sample)
+                hourly_dict, available_hours = self.extract_hourly_data(new_sample)
                 
                 # Stage prepared data
-                self.prepared_sample = new_sample
-                self.prepared_maps = new_maps
+                self.prepared_geometry = geometry_dict
+                self.prepared_hourly_data = hourly_dict
+                self.prepared_available_hours = available_hours
                 
                 logger.info("Preparation phase completed successfully")
                 return True
         
-        # Error handling
+        # Error handling with staging cleanup
         except Exception as e:
             logger.error(f"Preparation phase failed: {e}")
             self.set_error(f"Preparation failed: {e}")
+            
+            # Clear any partially prepared data to prevent memory leaks
+            self.prepared_geometry = None
+            self.prepared_hourly_data = None
+            self.prepared_available_hours = None
+            
             return False
     
     def deploy_update(self):
-        """Deployment phase: swap in new data"""
+        """Swap in new data"""
 
         # Validate prepared data availability
-        if self.prepared_sample is None or self.prepared_maps is None:
+        if self.prepared_geometry is None or self.prepared_hourly_data is None:
             logger.warning("No prepared data available for deployment - skipping update")
+            
+            # Clear staging to prevent accumulation from partial preparations
+            self.prepared_geometry = None
+            self.prepared_hourly_data = None
+            self.prepared_available_hours = None
             return
         
         # Additional validation to ensure data quality
-        if self.prepared_sample.empty or not self.prepared_maps:
+        if not self.prepared_geometry or not self.prepared_hourly_data:
             logger.warning("Prepared data is empty or invalid - skipping deployment")
+            
+            # Clear invalid staging data
+            self.prepared_geometry = None
+            self.prepared_hourly_data = None
+            self.prepared_available_hours = None
             return
         
-        logger.info("Deploying fresh predictions and maps...")
+        logger.info("Deploying fresh lightweight data structures...")
         
         try:
             with self.update_lock:
+                # Explicitly delete old data structures before replacement
+                old_geometry = self.crash_app.parsed_geometry
+                old_hourly = self.crash_app.hourly_data
+                
                 # Atomic data replacement for seamless user experience
-                self.crash_app.cached_sample = self.prepared_sample
-                self.crash_app.pregenerated_maps = self.prepared_maps
+                self.crash_app.parsed_geometry = self.prepared_geometry
+                self.crash_app.hourly_data = self.prepared_hourly_data
+                self.crash_app.data_manager.cache_available_hours(self.prepared_available_hours)
+                
+                # Force deletion of old data and trigger garbage collection
+                del old_geometry, old_hourly
+                import gc
+                gc.collect()
                 
                 # Update status tracking
                 self.last_update_time = datetime.now(pytz.timezone('America/Los_Angeles'))
                 self.update_status = "ready"
                 self.error_message = None
-                
-                # Clear staging area to free memory
-                self.prepared_sample = None
-                self.prepared_maps = None
                 
                 logger.info("Deployment completed - users now have access to fresh data")
         
@@ -150,6 +176,12 @@ class BackgroundUpdater:
         except Exception as e:
             logger.error(f"Deployment phase failed: {e}")
             self.set_error(f"Deployment failed: {e}")
+        
+        finally:
+            # Always clear staging area to prevent memory leaks (even on error)
+            self.prepared_geometry = None
+            self.prepared_hourly_data = None
+            self.prepared_available_hours = None
     
     def run_full_update(self):
         """Execute complete update cycle for startup or manual refresh"""
@@ -164,28 +196,59 @@ class BackgroundUpdater:
             self.deploy_update()
         else:
             logger.warning("Skipping deployment due to preparation failure")
+            
+            # Ensure staging is cleared even when skipping deployment
+            self.prepared_geometry = None
+            self.prepared_hourly_data = None
+            self.prepared_available_hours = None
     
-    def generate_maps(self, sample_data):
-        """Generate pre-rendered maps for all available hours"""
-
-        # Initialize vars and get hour range
-        maps = {}
-        unique_hours = sorted(sample_data['datetime'].unique())
+    def parse_geometry(self, filtered_predictions):
+        """Parse WKT geometry strings once and cache coordinate arrays by segment_id"""
         
-        logger.info(f"Generating {len(unique_hours)} pre-rendered maps")
+        logger.info("Parsing geometry strings to coordinate arrays...")
+        start_time = time.time()
         
-        for i, hour in enumerate(unique_hours):
-            # Filter data for this specific hour
-            hour_data = sample_data[sample_data['datetime'] == hour].copy()
+        from shapely import wkt
+        
+        geometry_dict = {}
+        
+        # Get unique segments to avoid parsing duplicates across time periods
+        unique_segments = filtered_predictions[['segment_id', 'geometry', 'full_name']].drop_duplicates(subset='segment_id')
+        
+        for _, row in unique_segments.iterrows():
+            geom = wkt.loads(row['geometry'])
+            if geom.geom_type == 'LineString':
+                # Store coordinate array and metadata by segment_id
+                coords = [[point[0], point[1]] for point in geom.coords]
+                geometry_dict[row['segment_id']] = {
+                    'coords': coords,
+                    'full_name': row['full_name']
+                }
+        
+        elapsed = time.time() - start_time
+        logger.info(f"Parsed {len(geometry_dict)} unique segments in {elapsed:.3f} seconds")
+        
+        return geometry_dict
+    
+    def extract_hourly_data(self, filtered_predictions):
+        """Extract hourly risk data indexed by hour"""
+        
+        logger.info("Extracting hourly risk data...")
+        start_time = time.time()
+        
+        hourly_dict = {}
+        available_hours = sorted(filtered_predictions['datetime'].unique())
+        
+        for i, hour in enumerate(available_hours):
+            hour_data = filtered_predictions[filtered_predictions['datetime'] == hour]
             
-            # Generate visualization map using crash app's rendering logic
-            maps[i] = self.crash_app.create_deck_map(hour_data)
-            
-            # Periodic progress logging for long operations
-            if (i + 1) % 5 == 0 or (i + 1) == len(unique_hours):
-                logger.info(f"Generated {i + 1}/{len(unique_hours)} maps")
+            # Store only essential data: list of (segment_id, risk_score) tuples
+            hourly_dict[i] = hour_data[['segment_id', 'risk_score']].to_dict('records')
         
-        return maps
+        elapsed = time.time() - start_time
+        logger.info(f"Extracted {len(hourly_dict)} hours of data in {elapsed:.3f} seconds")
+        
+        return hourly_dict, available_hours
     
     def set_error(self, message):
         """Set error state with message for status reporting"""

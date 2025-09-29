@@ -238,19 +238,15 @@ class WeatherClient:
         
         # Define core weather variables for regional averaging
         weather_vars = ['temp', 'humidity', 'rain', 'snow', 'snow_depth', 
-                       'cloud_cover', 'wind_speed', 'wind_gusts', 'is_day']
+                    'cloud_cover', 'wind_speed', 'wind_gusts', 'is_day']
         
         # Calculate regional weather averages across all successful stations
         regional_avg = successful_weather.groupby('datetime')[weather_vars].mean().reset_index()
         
-        # Generate station-specific fallback data using regional averages
-        fallback_data = []
-        for failed_id in failed_station_ids:
-            station_data = regional_avg.copy()
-            station_data['location_id'] = failed_id  # Assign failed station ID
-            fallback_data.append(station_data)
+        # Generate station-specific fallback data using vectorized assign
+        fallback_dfs = [regional_avg.assign(location_id=failed_id) for failed_id in failed_station_ids]
         
-        return pd.concat(fallback_data, ignore_index=True) if fallback_data else pd.DataFrame()
+        return pd.concat(fallback_dfs, ignore_index=True) if fallback_dfs else pd.DataFrame()
 
 # ================= FEATURE ENGINEERING =================
 

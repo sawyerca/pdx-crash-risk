@@ -17,7 +17,7 @@
 
 from dash import dcc, html
 import dash_deck
-from config import UI_CONFIG, UI_COLORS, get_deck_color
+from config import UI_CONFIG, UI_COLORS
 
 # ================= COMPONENT FUNCTIONS =================
 
@@ -69,7 +69,8 @@ def create_header():
         'display': 'flex',
         'borderBottom': f"1px solid {UI_COLORS['border_gray']}",
         'alignItems': 'center',
-        'flexShrink': '0'
+        'flexShrink': '0',
+        'zIndex': 500
     })
 
 def create_time_slider():
@@ -130,7 +131,7 @@ def create_map():
 
     # Legend positioning and styling
     legend_style = {
-        'position': 'absolute',
+        'position': 'fixed',
         'top': UI_CONFIG['legend_position']['top'],
         'right': UI_CONFIG['legend_position']['right'],
         'backgroundColor': UI_COLORS['background_dark'],
@@ -140,27 +141,21 @@ def create_map():
         'color': 'white',
         'fontSize': '12px',
         'fontFamily': 'Inter',
-        'zIndex': 1000,
+        'zIndex': 1300,
         'minWidth': '80px'
     }
     
     return html.Div([
         # Main interactive map component
-        dcc.Loading(
-            id="loading",
-            children=[
-                dash_deck.DeckGL(
-                id='crash-heatmap',  # Primary map component for callbacks
-                data={},  # Data populated by callbacks
-                tooltip={
-                'html': '<b>Risk Score:</b> {probability_text}<br><b>Street:</b> {full_name}',
-                 'style': {'backgroundColor': UI_COLORS['background_dark'], 'color': 'white'}
-                 },
-                style={'height': '100vh', 'width': '100%', 'margin': '0 auto'},
-                mapboxKey=""  # Uses default public key
-            )
-            ],
-            type="default",
+        dash_deck.DeckGL(
+        id='crash-heatmap',  # Primary map component for callbacks
+        data={},  # Data populated by callbacks
+        tooltip={
+        'html': '<b>Risk Score:</b> {probability_text}<br><b>Street:</b> {full_name}',
+            'style': {'backgroundColor': UI_COLORS['background_dark'], 'color': 'white'}
+            },
+        style={'position': 'absolute', 'top': '0', 'left': '0', 'right': '0', 'bottom': '0'},
+        mapboxKey=""  # Uses default public key
         ),
         
         # Risk level legend overlay with gradient visualization
@@ -173,10 +168,11 @@ def create_map():
                 html.Div(style={
                     'width': '30px',
                     'height': '150px',
-                    'background': 'linear-gradient(to top, rgba(26,29,35,0.27) 0%, rgba(127,127,0,0.27) 25%, rgba(255,255,0,0.46) 50%, rgba(255,127,0,0.64) 75%, rgba(255,0,0,0.9) 100%)', 
+                    'background': 'linear-gradient(to top, rgba(26,29,35,0.31) 0%, rgba(100,100,0,0.45) 25%, rgba(200,200,0,0.59) 50%, rgba(255,130,0,0.72) 75%, rgba(255,0,0,0.86) 100%)', 
                     'borderRadius': '4px',
                     'marginRight': '10px',
-                    'overflow': 'hidden'
+                    'overflow': 'hidden',
+                    'border': f"1px solid {UI_COLORS['border_gray']}"
                 }),
                 
                 # Numerical labels
@@ -280,9 +276,8 @@ def create_map():
         # Include time control slider
         create_time_slider()
     ], style={
-        'flex': '1',
+        'position': 'relative',
         'backgroundColor': UI_COLORS['background_darker'],
-        'height': '100%',
         'width': '100%',
         'overflow' : 'hidden'
     })
@@ -296,9 +291,10 @@ def create_app_layout():
         html.Div([
             create_map()
         ], style={
+            'position': 'relative',  
+            'zIndex': 1000,          
             'display': 'flex',
             'height': f"calc(100vh - {UI_CONFIG['header_height']})",
-            'overflow': 'hidden',
             'width': '100vw'
         })
     ], style={

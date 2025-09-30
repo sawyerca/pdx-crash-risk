@@ -354,7 +354,14 @@ class MapRenderer:
                 "pitch": 0,
                 "bearing": 0
             },
-            "controller": True,
+            "controller": {
+                "dragRotate": False,      # Disable rotation
+                "touchRotate": False,     # Disable touch rotation
+                "scrollZoom": True,       # Keep zoom
+                "dragPan": True,          # Keep panning
+                "doubleClickZoom": True,  # Keep double-click zoom
+                "touchZoom": True         # Keep touch zoom
+            },
             "layers": [{
                 "@@type": "PathLayer",
                 "id": "crash-risk-layer",

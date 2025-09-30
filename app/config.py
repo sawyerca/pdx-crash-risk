@@ -49,7 +49,7 @@ PERFORMANCE_CONFIG = {
 UI_CONFIG = {
     'header_height': '70px',
     'sidebar_width': '350px',              # For future sidebar implementation
-    'legend_position': {'top': '20px', 'right': '20px'},
+    'legend_position': {'top': '35px', 'right': '20px'},
     'info_icon_position': {'top': '80px', 'left': '10px'},
     'slider_position': {'bottom': '20px'},
     'notification_position': {'bottom': '150px', 'right': '20px'},
@@ -73,11 +73,11 @@ def get_deck_color(risk_score):
     
     # Define color stops with score thresholds
     color_stops = [
-        (0,   [26, 29, 35],   68),   # Very low
-        (25,  [127, 127, 0],  68),   # Low  
-        (50,  [255, 255, 0],  118),  # Medium
-        (75,  [255, 127, 0],  164),  # High
-        (100, [255, 0, 0],    230)   # Very high
+        (0,   [26, 29, 35],    70),   # Very low 
+        (25,  [100, 100, 0],   105),  # Low 
+        (50,  [200, 200, 0],   140),  # Medium 
+        (75,  [255, 130, 0],   175),  # High 
+        (100, [255, 0, 0],     220)   # Very high 
     ]
     
     # Find the two stops to interpolate between

@@ -50,7 +50,7 @@ WEATHER_DTYPES = {
     'wind_speed': 'float16', 'wind_gusts': 'float16', 'rain_3hr': 'float16'
 }
 
-CATEGORICAL_DTYPES = {'is_day': 'int8', 'location_id': 'int32'}
+CATEGORICAL_DTYPES = {'location_id': 'int32'}
 
 # ================= UTILITY FUNCTIONS =================
 
@@ -175,7 +175,7 @@ class WeatherClient:
                 "longitude": lon,
                 "hourly": ["temperature_2m", "relative_humidity_2m",
                           "rain", "snowfall", "snow_depth", "cloud_cover", 
-                          "wind_speed_10m", "wind_gusts_10m", "is_day"],
+                          "wind_speed_10m", "wind_gusts_10m"],
                 "timezone": "America/Los_Angeles",
                 "start_hour": start_time.strftime('%Y-%m-%dT%H:00'),
                 "end_hour": end_time.strftime('%Y-%m-%dT%H:00'),
@@ -209,7 +209,7 @@ class WeatherClient:
             
             # Extract weather vars
             weather_vars = ["temp", "humidity", "rain", "snow", "snow_depth",
-                           "cloud_cover", "wind_speed", "wind_gusts", "is_day"]
+                           "cloud_cover", "wind_speed", "wind_gusts"]
             
             # Map API response variables to standardized column names
             for i, var_name in enumerate(weather_vars):
@@ -238,7 +238,7 @@ class WeatherClient:
         
         # Define core weather variables for regional averaging
         weather_vars = ['temp', 'humidity', 'rain', 'snow', 'snow_depth', 
-                    'cloud_cover', 'wind_speed', 'wind_gusts', 'is_day']
+                    'cloud_cover', 'wind_speed', 'wind_gusts']
         
         # Calculate regional weather averages across all successful stations
         regional_avg = successful_weather.groupby('datetime')[weather_vars].mean().reset_index()

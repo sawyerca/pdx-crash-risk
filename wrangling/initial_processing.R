@@ -70,32 +70,14 @@ weather <- weather %>%
   ) %>%
   ungroup()
 
-# Add daylight indicator using regional center coordinates
-mean_lat = mean(id_lookup$latitude)
-mean_lon = mean(id_lookup$longitude)
-
-weather <- weather %>%
-  mutate(
-    date_local = as.Date(datetime, tz = "America/Los_Angeles"),
-    sun_times = getSunlightTimes(
-      date = date_local,
-      lat  = mean_lat,
-      lon  = mean_lon,
-      tz   = "America/Los_Angeles"
-    ),
-    sunrise = sun_times$sunrise,
-    sunset  = sun_times$sunset,
-    is_day  = as.numeric(datetime >= sunrise & datetime <= sunset)
-  ) %>%
-  select(-sun_times, -date_local, -sunrise, -sunset)
-
 # Simplify column names and remove unused variables
 weather <- weather %>%
   select(-weather_code_wmo_code, 
          -wind_direction_10m,
          -apparent_temperature_f, 
          -dew_point_2m_f, 
-         -surface_pressure_h_pa) %>%
+         -surface_pressure_h_pa,
+         -is_day) %>%
   rename(
     temp = temperature_2m_f,
     humidity = relative_humidity_2m_percent,
@@ -209,29 +191,84 @@ segment_stats <- all_segments %>%
 
 write_parquet(segment_stats, "../data/segment_stats.parquet")
 
-# ================= NEGATIVE SAMPLE GENERATION =================
+# ================= STRATIFIED NEGATIVE SAMPLE GENERATION =================
 
-# Generate negative samples at 10:1 ratio to handle class imbalance
+# Set seed 
 set.seed(123)
-sample_ratio = 10 * nrow(positives)
-num_gen = sample_ratio * 1.001 # Slight oversample to account for overlap removal
 
-# Time range
+# Define time periods and target ratio
 time_start <- as.POSIXct("2019-01-01 00:00:00", tz = "America/Los_Angeles")
 time_end   <- as.POSIXct("2024-12-31 15:00:00", tz = "America/Los_Angeles")
+target_neg_pos_ratio <- 10  # Target 10:1 ratio
 
-# Sample random segment-time combinations, remove overlaps with actual crashes
-negatives <- street_seg %>%
-  sample_n(num_gen, replace = TRUE) %>%
-  mutate(datetime = sample(
-    seq(time_start, time_end, by = "hour"), 
-    num_gen, replace = TRUE
+# Add year column to positives for stratification
+positives <- positives %>%
+  mutate(
+    datetime = as.POSIXct(datetime, tz = "America/Los_Angeles"),
+    year = year(datetime)
+  ) %>%
+  filter(!is.na(year))  # Remove any rows with NA year
+
+# Calculate positives and required negatives by year
+positives_by_year <- positives %>%
+  group_by(year) %>%
+  summarise(
+    n_positives = n(),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    n_negatives_needed = n_positives * target_neg_pos_ratio
   )
-  ) %>% 
-  anti_join(positives, by = c("segment_id", "datetime")) %>%
-  sample_n(sample_ratio)
 
-# Finalize features and clean up
+# Generate negatives separately for each year to maintain consistent ratio
+negatives_list <- list()
+
+for (yr in positives_by_year$year) {
+  
+  year_info <- positives_by_year %>% filter(year == yr)
+  n_needed <- year_info$n_negatives_needed
+  n_to_generate <- ceiling(n_needed * 1.01)
+  
+  # Define year-specific time range
+  year_start <- as.POSIXct(sprintf("%d-01-01 00:00:00", yr), tz = "America/Los_Angeles")
+  year_end <- as.POSIXct(sprintf("%d-12-31 23:00:00", yr), tz = "America/Los_Angeles")
+  year_end <- min(year_end, time_end)
+  
+  # Generate all available hours for this year
+  year_hours <- seq(year_start, year_end, by = "hour")
+  
+  # Sample indices
+  sampled_indices <- sample(1:length(year_hours), n_to_generate, replace = TRUE)
+  sampled_datetimes <- year_hours[sampled_indices]
+  
+  # Sample random segment-time combinations for this year
+  year_negatives <- street_seg %>%
+    sample_n(n_to_generate, replace = TRUE) %>%
+    mutate(
+      datetime = sampled_datetimes,
+      year = yr
+    )
+  
+  # Remove any overlaps with actual crashes in this year
+  year_positives <- positives %>% 
+    filter(year == yr) %>%
+    select(segment_id, datetime)
+  
+  year_negatives <- year_negatives %>%
+    anti_join(year_positives, by = c("segment_id", "datetime"))
+  
+  # Sample exactly the number needed
+  if (nrow(year_negatives) >= n_needed) {
+    year_negatives <- year_negatives %>% sample_n(n_needed)
+  }
+  
+  negatives_list[[as.character(yr)]] <- year_negatives
+}
+
+# Combine negatives
+negatives <- bind_rows(negatives_list)
+
+# Finalize features
 negatives <- negatives %>%
   mutate(
     month = month(datetime),
@@ -240,7 +277,9 @@ negatives <- negatives %>%
     crash_occurred = 0,
     svrty = NA
   ) %>%
-  select(-full_name, -geometry)
+  select(-full_name, -geometry, -year)
+
+positives <- positives %>% select(-year)
 
 # ================= FINAL DATA SET CREATION =================
 

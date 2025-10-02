@@ -325,47 +325,24 @@ random_search = RandomizedSearchCV(
 
 print("================= STARTING HYPERPARAMETER SEARCH =================")
 
-# # Calculate search space size
-# space_size = np.prod([len(v) for v in param_distributions.values()])
-# print(f"Search space size: {space_size:,} combinations")
+# Calculate search space size
+space_size = np.prod([len(v) for v in param_distributions.values()])
+print(f"Search space size: {space_size:,} combinations")
 
-# random_search.fit(X_train, y_train, verbose=False)
+random_search.fit(X_train, y_train, verbose=False)
 
-# print("================= HYPERPARAMETER RESULTS =================")
-# print(f"Best CV Score (Avg Precision): {random_search.best_score_:.4f}")
-# print(f"\nBest Hyperparameters:")
-# for param, value in sorted(random_search.best_params_.items()):
-#     print(f"  {param:20s}: {value}")
+print("================= HYPERPARAMETER RESULTS =================")
+print(f"Best CV Score (Avg Precision): {random_search.best_score_:.4f}")
+print(f"\nBest Hyperparameters:")
+for param, value in sorted(random_search.best_params_.items()):
+    print(f"  {param:20s}: {value}")
 
 # ================= FINAL MODEL TRAINING =================
 
 print("================= TRAINING FINAL MODEL =================")
 
-# Tune these two parameters
-fp = 7.0        # optimized for precision at 75% recall
-conf = 2.0       
-
-best_params = {
-    'subsample': 0.8, 
-    'scale_pos_weight': np.float64(9.996901724203076), 
-    'reg_lambda': 15, 
-    'reg_alpha': 0.5, 
-    'n_estimators': 700, 
-    'min_child_weight': 35, 
-    'max_depth': 4, 
-    'learning_rate': 0.03, 
-    'gamma': 0.1,  # XGBoost gamma, different from focal loss gamma
-    'colsample_bytree': 0.9
-}
-
-best_model = XGBClassifier(
-    random_state=123,
-    n_jobs=-1,
-    eval_metric="logloss",
-    objective=confidence_weighted_loss(fp, conf),  # <-- FOCAL LOSS
-    **best_params
-)
-
+# Train final model with best hyperparameters on full training set
+best_model = random_search.best_estimator_
 best_model.fit(X_train, y_train)
 
 # ================= FEATURE IMPORTANCE ANALYSIS =================
@@ -452,15 +429,15 @@ filtered_probs_ref = raw_probs_ref[raw_probs_ref >= cutoff]
 
 # ================= SAVE MODEL =================
 
-print("================= SAVING MODEL ARTIFACT =================")
-
 # Clear the objective from the model to make it picklable
 best_model.objective = None
+
+print("================= SAVING MODEL ARTIFACT =================")
 
 # Package model components and metadata 
 model_artifact = {
     'model': best_model,
-    'best_params': best_params,
+    'best_params': random_search.best_params_,
     'feature_cols': feature_cols,            
     'cutoff': cutoff,  
     'filtered_probs_ref': filtered_probs_ref,

@@ -20,7 +20,6 @@ from datetime import datetime
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-import time
 
 # ================= CONFIGURATION =================
 
@@ -206,7 +205,6 @@ class BackgroundUpdater:
         """Parse WKT geometry strings once and cache coordinate arrays by segment_id"""
         
         logger.info("Parsing geometry strings to coordinate arrays...")
-        start_time = time.time()
         
         from shapely import wkt
         
@@ -225,16 +223,12 @@ class BackgroundUpdater:
                     'full_name': row['full_name']
                 }
         
-        elapsed = time.time() - start_time
-        logger.info(f"Parsed {len(geometry_dict)} unique segments in {elapsed:.3f} seconds")
-        
         return geometry_dict
     
     def extract_hourly_data(self, filtered_predictions):
         """Extract hourly risk data indexed by hour"""
         
         logger.info("Extracting hourly risk data...")
-        start_time = time.time()
         
         hourly_dict = {}
         available_hours = sorted(filtered_predictions['datetime'].unique())
@@ -244,9 +238,6 @@ class BackgroundUpdater:
             
             # Store only essential data: list of (segment_id, risk_score) tuples
             hourly_dict[i] = hour_data[['segment_id', 'risk_score']].to_dict('records')
-        
-        elapsed = time.time() - start_time
-        logger.info(f"Extracted {len(hourly_dict)} hours of data in {elapsed:.3f} seconds")
         
         return hourly_dict, available_hours
     

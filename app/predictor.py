@@ -17,7 +17,6 @@
 import pickle
 import logging
 import pandas as pd
-import numpy as np 
 
 # ================= CONFIGURATION =================
 
@@ -53,8 +52,8 @@ def load_model(model_path):
 
 class CrashPredictor:
     """
-    Generates crash probabilities for street segments using model. Uses Box-Cox
-    transformed values with empirical CDF to assign a risk score.
+    Generates crash probabilities for street segments using model with  
+    percentile based risk scores.
     """
     
     def __init__(self, model_artifact):
@@ -66,7 +65,7 @@ class CrashPredictor:
         self.feature_cols = model_artifact['feature_cols']
     
     def predict(self, data_generator):
-        """Generate calibrated crash probabilities with chunking"""
+        """Generate crash probabilities with chunking"""
 
         # Initialize vars
         all_predictions = []
@@ -120,29 +119,6 @@ class CrashPredictor:
         # Combine all chunks into final prediction set
         logger.info("Combining all prediction chunks...")
         final_predictions = pd.concat(all_predictions, ignore_index=True)
-
-        # Add memory breakdown
-        memory_usage = final_predictions.memory_usage(deep=True)
-        total_memory = memory_usage.sum() / (1024 ** 3)
-        
-        logger.info(f"Final predictions memory usage: {total_memory:.3f} GiB")
         
         return final_predictions
 
-# ================= TESTING =================
-
-if __name__ == '__main__':
-    """Test the prediction pipeline with sample data"""
-
-    from preprocessing import street_encode, DataPipeline
-
-    pipe = DataPipeline()
-    id_lookup = pd.read_csv('../data/id_lookup.csv')
-    street_seg = street_encode('../data/street_seg.parquet')
-    seg_stats = pd.read_parquet('../data/segment_stats.parquet')
-    merged_data = pipe.model_input(id_lookup, street_seg, seg_stats)
-    
-    model = load_model('../models/crash_model.pkl')
-    predictor = CrashPredictor(model)
-
-    test_predictions = predictor.predict(merged_data)

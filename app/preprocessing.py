@@ -24,7 +24,6 @@ import numpy as np
 import logging
 import requests
 from urllib3.exceptions import NewConnectionError, MaxRetryError
-import psutil
 from datetime import datetime
 from config import PERFORMANCE_CONFIG
 
@@ -50,7 +49,7 @@ WEATHER_DTYPES = {
     'wind_speed': 'float16', 'wind_gusts': 'float16', 'rain_3hr': 'float16'
 }
 
-CATEGORICAL_DTYPES = {'location_id': 'int32'}
+CATEGORICAL_DTYPES = {'location_id': 'int8'}
 
 # ================= UTILITY FUNCTIONS =================
 
@@ -132,7 +131,6 @@ class WeatherClient:
         # Process each weather station sequentially
         for idx, station in id_lookup.iterrows():
             try:
-                logger.info(f"Fetching station {station['location_id']} ({idx+1}/{len(id_lookup)})")
                 df = self.fetch_single_station(
                     station['latitude'], 
                     station['longitude'], 
@@ -361,7 +359,7 @@ class DataProcessor:
         
         # Determine temporal scope for processing
         unique_hours = sorted(weather_features['datetime'].unique())
-        logger.info(f"Processing {len(unique_hours)} hours of data")
+        logger.info(f"Processing {len(unique_hours)} hours of data...")
         
         # Pre-sort street segments for efficient merge operations
         street_seg_sorted = street_seg.sort_values('location_id')
@@ -372,8 +370,6 @@ class DataProcessor:
             # Dynamically calculate chunk size based on current memory state
             chunk_hours = self.calculate_optimal_chunk_size()
             chunk_hours_list = unique_hours[i:i + chunk_hours]
-            
-            logger.info(f"Processing hours {i+1}-{min(i+chunk_hours, len(unique_hours))} of {len(unique_hours)}")
             
             # Extract weather data for current time chunk
             weather_chunk = weather_features[
@@ -440,18 +436,3 @@ class DataPipeline:
                 sort=False
             )
             yield model_chunk
-
-# ================= TESTING =================
-
-if __name__ == '__main__':
-    """Test the complete data pipeline with sample data"""
-    
-    pipe = DataPipeline()
-    id_lookup = pd.read_csv('../data/id_lookup.csv')
-    street_seg = street_encode('../data/street_seg.parquet')
-    seg_stats = pd.read_parquet('../data/segment_stats.parquet')
-    test_data = pipe.model_input(id_lookup, street_seg, seg_stats)
-    
-    for chunk in test_data:
-        print(f"Processed chunk with {len(chunk)} rows")
-        break

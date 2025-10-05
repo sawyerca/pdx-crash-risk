@@ -28,7 +28,7 @@ from callbacks import register_callbacks
 app = dash.Dash(
     __name__, 
     external_stylesheets=EXTERNAL_STYLESHEETS,  # Font and styling imports from config
-    title="PDX Crash Risks"                     # Browser tab title
+    title="PDX Crash Risk"                     # Browser tab title
 )
 
 # Expose WSGI server for production deployment (required for hosting platforms)
@@ -45,11 +45,8 @@ app.layout = create_app_layout()
 # Register all interactive callback functions for user interface reactivity
 register_callbacks(app)
 
-# ================= SERVER STARTUP =================
+# ================= SERVER TESTING =================
 
-# Run development server when executed directly (not in production)
 if __name__ == '__main__':
-    # Get port from environment variable 
     port = int(os.environ.get('PORT', 8050))
-    # Start development server (not suitable for production use)
     app.run(host='0.0.0.0', port=port, debug=False)

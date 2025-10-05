@@ -28,8 +28,7 @@ from shapely import wkt
 from datetime import datetime
 import pytz
 import numpy as np
-import time
-from config import get_deck_color, MAP_CONFIG, PERFORMANCE_CONFIG
+from config import get_deck_color, MAP_CONFIG
 from bg_updater import BackgroundUpdater
 
 
@@ -52,7 +51,7 @@ class DataManager:
         
         logger.info("Loading core datasets...")
         
-        # Load trained crash prediction model with calibrator and metadata
+        # Load trained crash prediction model
         self.model_artifact = load_model('../models/crash_model.pkl')
         
         # Load street network segments with encoded categorical features
@@ -67,11 +66,9 @@ class DataManager:
         # Initialize data caches
         self.cached_predictions = None  # Temporary: deleted after filtering
         self.cached_sample = None       # Temporary: deleted after hourly data extraction
-        self.cached_available_hours = None  # Permanent: lightweight hour list for UI
-        self.parsed_geometry = None     # Permanent: segment_id → coordinate arrays
-        self.hourly_data = None         # Permanent: lightweight hourly risk data
-        
-        logger.info("Data manager initialized successfully")
+        self.cached_available_hours = None  # Permanent: hour list for UI
+        self.parsed_geometry = None     # Permanent: segment_id to coordinate arrays
+        self.hourly_data = None         # Permanent: hourly risk data
     
     def get_model_artifact(self):
         """Return the loaded model artifact"""
@@ -114,7 +111,7 @@ class DataManager:
         self.parsed_geometry = geometry_dict
     
     def cache_hourly_data(self, hourly_dict):
-        """Cache lightweight hourly risk data for on-demand map generation"""
+        """Cache hourly risk data for on-demand map generation"""
 
         self.hourly_data = hourly_dict
     
@@ -160,6 +157,8 @@ class PredictionEngine:
     def __init__(self, data_manager):
         """Initialize prediction engine with data manager reference"""
         
+        logger.info("Prediction engine initializing...")
+
         self.data_manager = data_manager
         
         # Initialize real-time weather data pipeline
@@ -175,7 +174,7 @@ class PredictionEngine:
         # Build percentile lookup table 
         self.percentile_thresholds = self.build_percentile_lookup()
 
-        logger.info("Prediction engine initialized")
+
     
     def build_percentile_lookup(self):
         """Build percentile threshold lookup table from reference data"""
@@ -236,11 +235,10 @@ class PredictionEngine:
             predictions = self.generate_predictions()
             
             # Filter out segments with low risk (for speed)
-            logger.info(f"Filtering for predictions with prob > {self.cutoff:6f}")
             sample = predictions[
                 predictions['crash_probability'] >= self.cutoff # Filter out bottom portion (based on knee point)
             ].copy()
-            logger.info(f"Filtered to {len(sample)} segments")
+            logger.info(f"Filtered to {len(sample)} segments with prob > {self.cutoff:6f}")
 
             logger.info(f"Scoring segments...")
             sample = self.score_risk(sample)
@@ -265,7 +263,6 @@ class MapRenderer:
         """Parse WKT geometry strings once and cache coordinate arrays by segment_id"""
         
         logger.info("Parsing geometry strings to coordinate arrays...")
-        start_time = time.time()
         
         geometry_dict = {}
         
@@ -282,16 +279,14 @@ class MapRenderer:
                     'full_name': row['full_name']
                 }
         
-        elapsed = time.time() - start_time
-        logger.info(f"Parsed {len(geometry_dict)} unique segments in {elapsed:.3f} seconds")
+        logger.info(f"Parsed {len(geometry_dict)} unique segments")
         
         return geometry_dict
     
     def extract_hourly_data(self, filtered_predictions):
-        """Extract lightweight hourly risk data indexed by hour"""
+        """Extract hourly risk data indexed by hour"""
         
         logger.info("Extracting hourly risk data...")
-        start_time = time.time()
         
         hourly_dict = {}
         available_hours = sorted(filtered_predictions['datetime'].unique())
@@ -301,9 +296,6 @@ class MapRenderer:
             
             # Store only essential data: list of (segment_id, risk_score) tuples
             hourly_dict[i] = hour_data[['segment_id', 'risk_score']].to_dict('records')
-        
-        elapsed = time.time() - start_time
-        logger.info(f"Extracted {len(hourly_dict)} hours of data in {elapsed:.3f} seconds")
         
         return hourly_dict, available_hours
     
@@ -379,11 +371,11 @@ class MapRenderer:
         }
     
     def prepare_data(self):
-        """Prepare lightweight data structures for fast on-demand map generation"""
+        """Prepare  data structures for fast on-demand map generation"""
         
         # Log initial system memory state
         ram_start = psutil.virtual_memory()
-        logger.info(f"Starting data preparation - RAM: {ram_start.percent:.1f}% used, {ram_start.available / 1024**3:.1f} GB available")
+        logger.info(f"Starting data preparation...")
         
         # Get filtered prediction dataset
         filtered_predictions = self.prediction_engine.filter_predictions()
@@ -392,7 +384,7 @@ class MapRenderer:
         geometry_dict = self.parse_geometry(filtered_predictions)
         self.data_manager.cache_parsed_geometry(geometry_dict)
         
-        # Extract lightweight hourly data
+        # Extract hourly data
         hourly_dict, available_hours = self.extract_hourly_data(filtered_predictions)
         self.data_manager.cache_hourly_data(hourly_dict)
         self.data_manager.cache_available_hours(available_hours)
@@ -400,19 +392,13 @@ class MapRenderer:
         logger.info(f"Cached {len(available_hours)} available hours for UI")
         
         # Delete prediction caches to free memory
-        logger.info("Data prepared - clearing prediction caches to free memory")
+        logger.info("Data prepared, clearing prediction caches...")
         self.data_manager.cached_predictions = None
         self.data_manager.cached_sample = None
         
         # Force garbage collection to reclaim memory immediately
         import gc
         gc.collect()
-        
-        # Log final memory state
-        ram_final = psutil.virtual_memory()
-        logger.info(f"Data preparation complete!")
-        logger.info(f"Final RAM usage: {ram_final.percent:.1f}% used, {ram_final.available / 1024**3:.1f} GB available")
-        logger.info(f"Memory freed: {(ram_start.percent - ram_final.percent):.1f}% ({(ram_start.used - ram_final.used) / 1024**3:.1f} GB)")
 
     def get_available_hours(self):
         """Extract sorted list of available prediction hours from cached hours list"""
@@ -437,7 +423,7 @@ class CrashRiskApp:
         self.prediction_engine = PredictionEngine(self.data_manager)
         self.map_renderer = MapRenderer(self.prediction_engine)
         
-        # Prepare lightweight data structures for fast map generation
+        # Prepare data structures for fast map generation
         self.map_renderer.prepare_data()
 
         # Initialize and start background data refresh system

@@ -242,7 +242,13 @@ def create_map():
                             style={'color': UI_COLORS['link_blue'], 'fontSize': '10px', 'textDecoration': 'underline'}),
                         html.Div(" contributors", style={'display': 'inline', 'fontSize': '10px', 'color': UI_COLORS['text_gray']})
 
-                ])
+                ]),
+                html.Div([
+                    html.Div("Created by Sawyer Anderson", style={'fontWeight': '600', 'fontSize': '13px'}),
+                    html.Div("Source code available on ", style={'display': 'inline', 'fontSize': '12px'}),
+                    html.A("Github", href="https://github.com/sawyerca/pdx-crash-risk", target="_blank",
+                           style={'color': UI_COLORS['link_blue'], 'fontSize': '12px', 'textDecoration': 'underline'})  
+                ], style={'margin': '8px 0 0 0'})
 
             ],
             id='info-tooltip-content',

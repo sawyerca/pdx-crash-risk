@@ -25,6 +25,7 @@ import logging
 import requests
 from urllib3.exceptions import NewConnectionError, MaxRetryError
 from datetime import datetime
+import gc
 from config import PERFORMANCE_CONFIG
 
 # ================= CONFIGURATION =================
@@ -398,7 +399,6 @@ class DataProcessor:
             
             # Explicit memory cleanup to prevent accumulation
             del weather_chunk, weather_chunk_sorted
-            import gc 
             gc.collect()  
             
             yield merged_chunk
@@ -426,13 +426,23 @@ class DataPipeline:
         weather_features = self.feature_engineer.process_weather_features(weather_data)
         self.feature_engineer.validate_features(weather_features)
         
-        # Merge with street network and segment statistics
-        for merged_chunk in self.data_processor.merge_street_weather(street_seg, weather_features):
-            # Add historical segment crash statistics to complete feature set
-            model_chunk = merged_chunk.merge(
-                seg_stats,
-                on='segment_id',  
-                how='inner',     
-                sort=False
-            )
-            yield model_chunk
+        # Delete raw weather data  
+        del weather_data
+        gc.collect()
+        
+        try:
+            # Merge with street network and segment statistics
+            for merged_chunk in self.data_processor.merge_street_weather(street_seg, weather_features):
+                # Add historical segment crash statistics to complete feature set
+                model_chunk = merged_chunk.merge(
+                    seg_stats,
+                    on='segment_id',  
+                    how='inner',     
+                    sort=False
+                )
+                yield model_chunk
+
+        # Delete weather features when/if generator completes/fails
+        finally:
+            del weather_features
+            gc.collect()

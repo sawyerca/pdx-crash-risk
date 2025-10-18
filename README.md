@@ -59,10 +59,10 @@ Traffic crashes in Portland result in dozens of fatalities and many more injurie
 
 | Metric | Value | Interpretation for Crash Risk Prediction |
 |--------|-------|------------------------------------------|
-| **ROC-AUC** | 0.9106 | Model demonstrates excellent discriminative ability between crash and non-crash segment-hours; ranks 91% of crash instances higher than non-crash instances |
-| **Average Precision** | 0.6859 | Strong performance given class imbalance; substantially outperforms random baseline (~0.10) and naive strategies |
-| **Lift @ Top 1%** | 10.3x | Highest-scoring 1% of segment-hour predictions contain 10.3% of all crashes; model successfully concentrates risk in top predictions |
-| **Precision @ 50% Recall** | 0.78 | When threshold captures half of all crashes, 78% of flagged segment-hours actually experience crashes; false positive rate = 22% |
+| **ROC-AUC** | 0.92 | Model demonstrates excellent discriminative ability between crash and non-crash segment-hours; ranks 92% of crash instances higher than non-crash instances |
+| **Average Precision** | 0.69 | Strong performance given class imbalance; substantially outperforms random baseline (~0.10) and naive strategies |
+| **Lift @ Top 1%** | 10.36x | Highest-scoring 1% of segment-hour predictions contain 10.36% of all crashes; model successfully concentrates risk in top predictions |
+| **Precision @ 50% Recall** | 0.77 | When threshold captures half of all crashes, 77% of flagged segment-hours actually experience crashes; false positive rate = 23% |
 
 ---
 

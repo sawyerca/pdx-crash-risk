@@ -26,7 +26,8 @@ from sklearn.metrics import (
     precision_recall_curve,
     log_loss,
     matthews_corrcoef,
-    cohen_kappa_score
+    cohen_kappa_score,
+    make_scorer
 )
 from xgboost import XGBClassifier
 
@@ -248,7 +249,7 @@ X_test, y_test   = test_df[feature_cols], test_df['crash_occurred']
 # Calculate class imbalance ratio for XGBoost weighting
 imbalance_ratio = (y_train == 0).sum() / (y_train == 1).sum()
 
-# ================= CUSTOM OBJECTIVE FUNCTION =================
+# ================= OBJECTIVE AND SCORING FUNCTIONS =================
 
 def confidence_weighted_loss(base_fp_weight, confidence_multiplier):
     """Custom objective function that penalizes confident false positives"""
@@ -267,11 +268,21 @@ def confidence_weighted_loss(base_fp_weight, confidence_multiplier):
         return grad, hess
     return objective
 
+def precision_75(y_true, y_proba, **kwargs):
+    """Calculate precision when recall is at 75% level"""
+    
+    precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
+    
+    # Find index where recall is closest to 75%
+    idx = np.argmin(np.abs(recall - 0.75))
+    
+    return precision[idx]
+
 # ================= HYPERPARAMETER TUNING =================
 
 # Parameters (experimentally optimized for precision @ 75% recall)
-fp_weight = 7.0              # Base false positive penalty
-confidence_mult = 2.0        # Confidence-based penalty multiplier
+fp_weight = 7.0              
+confidence_mult = 2.0       
 
 # Define hyperparameter search space
 param_distributions = {
@@ -285,24 +296,21 @@ param_distributions = {
     'colsample_bytree': [0.6, 0.7, 0.8, 0.9],                
     
     # Regularization 
-    'min_child_weight': [10, 15, 20, 25, 30, 35],           
-    'gamma': [0.0, 0.1, 0.3, 0.5, 1.0],                 
-    'reg_alpha': [0.0, 0.1, 0.5, 1.0, 2.0],                  
-    'reg_lambda': [1, 2, 5, 10, 15],                        
-    
-    # Class imbalance handling - works alongside custom objective
-    'scale_pos_weight': [
-        0.3 * imbalance_ratio,  
-        0.5 * imbalance_ratio,  
-        0.7 * imbalance_ratio, 
-        1.0 * imbalance_ratio,  
-        1.3 * imbalance_ratio, 
-        1.5 * imbalance_ratio, 
-    ],      
+    'min_child_weight': [25, 30, 35, 40, 50, 60],      
+    'gamma': [0.5, 1.0, 2.0, 3.0, 5.0],             
+    'reg_alpha': [1.0, 2.0, 5.0, 10.0, 15.0],             
+    'reg_lambda': [10, 15, 20, 30, 50],             
 }
 
-# Use time series CV to respect temporal ordering
+# Use time series CV 
 cv_strategy = TimeSeriesSplit(n_splits=3)
+
+# Create custom scorer focused on precision at 75% recall
+precision_75_score = make_scorer(
+    precision_75, 
+    needs_proba=True, 
+    greater_is_better=True
+    )
 
 # Configure randomized search 
 random_search = RandomizedSearchCV(
@@ -315,10 +323,10 @@ random_search = RandomizedSearchCV(
     param_distributions=param_distributions,
     n_iter=40,              
     cv=cv_strategy,
-    scoring='average_precision',  
+    scoring=precision_75_score,  
     n_jobs=-1,
     random_state=123,
-    verbose=2 # Show progress
+    verbose=2 
 )
 
 # Execute hyperparameter search
@@ -337,7 +345,7 @@ print(f"\nBest Hyperparameters:")
 for param, value in sorted(random_search.best_params_.items()):
     print(f"  {param:20s}: {value}")
 
-# ================= FINAL MODEL TRAINING =================
+# ================= INITIAL MODEL TRAINING =================
 
 print("================= TRAINING FINAL MODEL =================")
 
@@ -375,6 +383,24 @@ print_metrics_report(train_metrics, label="TRAINING SET")
 print("Calculating test set metrics...")
 test_metrics = calculate_comprehensive_metrics(y_test, y_proba_test, label="Test")
 print_metrics_report(test_metrics, label="TEST SET")
+
+# ================= FINAL MODEL TRAINING =================
+
+print("================= RETRAINING ON FULL DATASET =================")
+
+# Combine train and test sets
+X_all = pd.concat([X_train, X_test], ignore_index=True)
+y_all = pd.concat([y_train, y_test], ignore_index=True)
+
+# Retrain model with best hyperparameters on full dataset
+final_model = XGBClassifier(
+        random_state=123,
+        n_jobs=-1,
+        eval_metric="logloss",
+        objective=confidence_weighted_loss(fp_weight, confidence_mult),
+        **random_search.best_params_
+    )
+final_model.fit(X_all, y_all)
 
 # ================= KNEE CUTOFF FOR SCORING =================
 
@@ -414,29 +440,26 @@ def find_knee_cutoff(raw_probs):
 
 print("================= CALCULATING KNEE CUTOFF =================")
 
-# Get raw probabilities for all data (2019-2024) for cutoff calculation
-all_X = pd.concat([X_train, X_test])
-raw_probs_ref = best_model.predict_proba(all_X)[:, 1]
+# Recalculate cutoff and reference probabilities using ALL data
+print("Recalculating cutoff and reference probabilities on full dataset...")
+all_probs = final_model.predict_proba(X_all)[:, 1]
+cutoff = find_knee_cutoff(all_probs)
+filtered_probs_ref = all_probs[all_probs >= cutoff]
 
-cutoff = find_knee_cutoff(raw_probs_ref)
-
-print(f"Knee cutoff probability: {cutoff:.6f}")
-print(f"Percentile at cutoff: {(raw_probs_ref < cutoff).mean() * 100:.2f}%")
-print(f"Segments above cutoff: {(raw_probs_ref >= cutoff).sum():,} ({(raw_probs_ref >= cutoff).mean() * 100:.2f}%)")
-
-# Filter to keep only high-risk predictions for reference distribution
-filtered_probs_ref = raw_probs_ref[raw_probs_ref >= cutoff]
+print(f"Cutoff probability: {cutoff:.6f}")
+print(f"Percentile at cutoff: {(all_probs <= cutoff).mean() * 100:.2f}%")
+print(f"Samples above cutoff: {len(filtered_probs_ref):,} ({(all_probs >= cutoff).mean() * 100:.2f}%)")
 
 # ================= SAVE MODEL =================
 
 # Clear the objective from the model to make it picklable
-best_model.objective = None
+final_model.objective = None
 
 print("================= SAVING MODEL ARTIFACT =================")
 
 # Package model components and metadata 
 model_artifact = {
-    'model': best_model,
+    'model': final_model,
     'best_params': random_search.best_params_,
     'feature_cols': feature_cols,            
     'cutoff': cutoff,  

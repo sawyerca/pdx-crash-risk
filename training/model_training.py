@@ -190,7 +190,7 @@ def print_metrics_report(metrics, label=""):
         print(f"Matthews Corr Coef:      {metrics['mcc_at_optimal']:.4f}")
         print(f"Cohen's Kappa:           {metrics['cohen_kappa_at_optimal']:.4f}")
     
-    print("\n=================--- PROBABILITY DISTRIBUTION =================")
+    print("\n==================== PROBABILITY DISTRIBUTION =================")
     print(f"Mean:                    {metrics['prob_mean']:.6f}")
     print(f"Std Dev:                 {metrics['prob_std']:.6f}")
     print(f"Min:                     {metrics['prob_min']:.6f}")
@@ -245,9 +245,6 @@ feature_cols = [c for c in train_df.columns if c not in exclude_cols]
 # Create feature matrices and target vectors for modeling
 X_train, y_train = train_df[feature_cols], train_df['crash_occurred']
 X_test, y_test   = test_df[feature_cols], test_df['crash_occurred']
-
-# Calculate class imbalance ratio for XGBoost weighting
-imbalance_ratio = (y_train == 0).sum() / (y_train == 1).sum()
 
 # ================= OBJECTIVE AND SCORING FUNCTIONS =================
 
@@ -342,8 +339,7 @@ random_search.fit(X_train, y_train, verbose=False)
 print("================= HYPERPARAMETER RESULTS =================")
 print(f"Best CV Score (Avg Precision): {random_search.best_score_:.4f}")
 print(f"\nBest Hyperparameters:")
-for param, value in sorted(random_search.best_params_.items()):
-    print(f"  {param:20s}: {value}")
+print(random_search.best_params_)
 
 # ================= INITIAL MODEL TRAINING =================
 
@@ -388,19 +384,40 @@ print_metrics_report(test_metrics, label="TEST SET")
 
 print("================= RETRAINING ON FULL DATASET =================")
 
-# Combine train and test sets
-X_all = pd.concat([X_train, X_test], ignore_index=True)
-y_all = pd.concat([y_train, y_test], ignore_index=True)
+# Recalculate segment statistics from all data 
+full_data = data.copy()
+full_crashes = full_data[full_data['crash_occurred'] == 1]
+segment_stats_full = full_crashes.groupby('segment_id').size().reset_index(name='count')
+
+# Get all unique segments
+all_segments_full = full_data['segment_id'].unique()
+
+# Create complete segment statistics table with zero-fill
+segment_stats_full = pd.DataFrame({'segment_id': all_segments_full}).merge(
+    segment_stats_full, on='segment_id', how='left'
+).fillna(0)
+
+# Engineer segment-level features from ALL crash history
+segment_stats_full['seg_log_count'] = np.log1p(segment_stats_full['count'])
+segment_stats_full = segment_stats_full.drop('count', axis=1)
+
+# Merge with full dataset
+full_data = full_data.merge(segment_stats_full, on='segment_id', how='left')
+
+# Create feature matrices for ALL data with updated segment stats
+X_all = full_data[feature_cols]
+y_all = full_data['crash_occurred']
 
 # Retrain model with best hyperparameters on full dataset
 final_model = XGBClassifier(
-        random_state=123,
-        n_jobs=-1,
-        eval_metric="logloss",
-        objective=confidence_weighted_loss(fp_weight, confidence_mult),
-        **random_search.best_params_
-    )
+    random_state=123,
+    n_jobs=-1,
+    eval_metric="logloss",
+    objective=confidence_weighted_loss(fp_weight, confidence_mult),
+    **random_search.best_params_
+)
 final_model.fit(X_all, y_all)
+
 
 # ================= KNEE CUTOFF FOR SCORING =================
 

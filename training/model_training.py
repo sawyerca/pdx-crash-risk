@@ -6,7 +6,7 @@
 #          comprehensive evaluation metrics
 # 
 # Input Files:
-#   - ../training/ml_input_data.parquet: Preprocessed input dat
+#   - ../training/ml_input_data.parquet: Preprocessed input data
 #
 # Output:
 #   - ../models/crash_model.pkl: Trained model with metadata
@@ -205,15 +205,15 @@ def print_metrics_report(metrics, label=""):
 # Load input data and define target columns
 data = pd.read_parquet("../training/ml_input_data.parquet")
 
-target_cols = ['crash_occurred', 'svrty_PDO', 'svrty_INJ', 'svrty_FAT']
+target_cols = ['crash_occurred']
 
 # ================= DATA PREPARATION =================
 
 # Temporal split:
-# Training: 2019-2023
-# Test: 2024 
-train_df = data[data['datetime'] <= '2023-12-31'].copy()
-test_df  = data[data['datetime'].dt.year == 2024].copy()
+# Training: 2007-2022
+# Test: 2023 
+train_df = data[data['datetime'] <= '2022-12-31'].copy()
+test_df  = data[data['datetime'].dt.year == 2023].copy()
 
 # Recalculate segment statistics from training data only
 train_crashes = train_df[train_df['crash_occurred'] == 1]
@@ -246,40 +246,7 @@ feature_cols = [c for c in train_df.columns if c not in exclude_cols]
 X_train, y_train = train_df[feature_cols], train_df['crash_occurred']
 X_test, y_test   = test_df[feature_cols], test_df['crash_occurred']
 
-# ================= OBJECTIVE AND SCORING FUNCTIONS =================
-
-def confidence_weighted_loss(base_fp_weight, confidence_multiplier):
-    """Custom objective function that penalizes confident false positives"""
-
-    def objective(y_true, y_pred):
-        # Convert raw predictions to probabilities
-        p = 1.0 / (1.0 + np.exp(-y_pred))
-        
-        # Calculate confidence-weighted false positive penalty
-        fp_penalty = base_fp_weight + confidence_multiplier * p
-        
-        # Compute gradients
-        grad = np.where(y_true == 1, p - 1, fp_penalty * p)
-        hess = np.where(y_true == 1, p * (1 - p), fp_penalty * p * (1 - p))
-        
-        return grad, hess
-    return objective
-
-def precision_75(y_true, y_proba, **kwargs):
-    """Calculate precision when recall is at 75% level"""
-    
-    precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
-    
-    # Find index where recall is closest to 75%
-    idx = np.argmin(np.abs(recall - 0.75))
-    
-    return precision[idx]
-
-# ================= HYPERPARAMETER TUNING =================
-
-# Parameters (experimentally optimized for precision @ 75% recall)
-fp_weight = 7.0              
-confidence_mult = 2.0       
+# ================= HYPERPARAMETER TUNING =================      
 
 # Define hyperparameter search space
 param_distributions = {
@@ -302,25 +269,18 @@ param_distributions = {
 # Use time series CV 
 cv_strategy = TimeSeriesSplit(n_splits=3)
 
-# Create custom scorer focused on precision at 75% recall
-precision_75_score = make_scorer(
-    precision_75, 
-    needs_proba=True, 
-    greater_is_better=True
-    )
-
 # Configure randomized search 
 random_search = RandomizedSearchCV(
     estimator=XGBClassifier(
         random_state=123,
         n_jobs=-1,
-        eval_metric="logloss",
-        objective=confidence_weighted_loss(fp_weight, confidence_mult),
+        objective='binary:logistic',
+        eval_metric='logloss'
     ),
     param_distributions=param_distributions,
     n_iter=40,              
     cv=cv_strategy,
-    scoring=precision_75_score,  
+    scoring='average_precision',  
     n_jobs=-1,
     random_state=123,
     verbose=2 
@@ -345,7 +305,7 @@ print(random_search.best_params_)
 
 print("================= TRAINING FINAL MODEL =================")
 
-# Train final model with best hyperparameters on full training set
+# Train final model with best hyperparameters on training set
 best_model = random_search.best_estimator_
 best_model.fit(X_train, y_train)
 
@@ -369,11 +329,6 @@ print("================= EVALUATION =================")
 # Generate predictions for both train and test sets
 y_proba_train = best_model.predict_proba(X_train)[:, 1]
 y_proba_test = best_model.predict_proba(X_test)[:, 1]
-
-# Calculate comprehensive metrics for training set
-print("Calculating training set metrics...")
-train_metrics = calculate_comprehensive_metrics(y_train, y_proba_train, label="Train")
-print_metrics_report(train_metrics, label="TRAINING SET")
 
 # Calculate comprehensive metrics for test set
 print("Calculating test set metrics...")
@@ -408,16 +363,8 @@ full_data = full_data.merge(segment_stats_full, on='segment_id', how='left')
 X_all = full_data[feature_cols]
 y_all = full_data['crash_occurred']
 
-# Retrain model with best hyperparameters on full dataset
-final_model = XGBClassifier(
-    random_state=123,
-    n_jobs=-1,
-    eval_metric="logloss",
-    objective=confidence_weighted_loss(fp_weight, confidence_mult),
-    **random_search.best_params_
-)
-final_model.fit(X_all, y_all)
-
+# Retrain model on full dataset
+best_model.fit(X_all, y_all)
 
 # ================= KNEE CUTOFF FOR SCORING =================
 
@@ -482,11 +429,7 @@ model_artifact = {
     'cutoff': cutoff,  
     'filtered_probs_ref': filtered_probs_ref,
     'train_metrics': train_metrics,
-    'test_metrics': test_metrics,
-    'objective_params': {
-        'base_fp_weight': fp_weight,
-        'confidence_multiplier': confidence_mult
-    }
+    'test_metrics': test_metrics
 }
 
 output_path = '../models/crash_model.pkl'

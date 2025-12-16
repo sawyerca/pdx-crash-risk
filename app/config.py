@@ -73,10 +73,10 @@ def get_deck_color(risk_score):
     
     # Define color stops with score thresholds
     color_stops = [
-        (0,   [26, 29, 35],    70),   # Very low 
-        (25,  [100, 100, 0],   105),  # Low 
-        (50,  [200, 200, 0],   140),  # Medium 
-        (75,  [255, 130, 0],   175),  # High 
+        (0,   [26, 29, 35],    20),   # Very low 
+        (25,  [100, 100, 0],   45),   # Low 
+        (50,  [200, 200, 0],   90),  # Medium 
+        (75,  [255, 130, 0],   135),  # High 
         (100, [255, 0, 0],     220)   # Very high 
     ]
     

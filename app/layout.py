@@ -232,7 +232,12 @@ def create_map():
                 # Data source attributions with external links
                 html.Div([
                     create_attribution_link("Weather data by ", "Open-Meteo.com", "https://open-meteo.com"),
-                    create_attribution_link("Crash data courtesy of ", "ODOT Crash Reporting", "https://tvc.odot.state.or.us/tvc/"),
+                    html.Div("Crash data courtesy of ", style={'display': 'inline', 'fontSize': '10px', 'color': UI_COLORS['text_gray']}),
+                        html.A("ODOT Crash Reporting", href="https://tvc.odot.state.or.us/tvc/", target="_blank",
+                            style={'color': UI_COLORS['link_blue'], 'fontSize': '10px', 'textDecoration': 'underline'}),
+                        html.Div(" and ", style={'display': 'inline', 'fontSize': '10px', 'color': UI_COLORS['text_gray']}),
+                        html.A("Portland Metro RLIS Data", href="https://arcg.is/0CnjDC0", target="_blank",
+                            style={'color': UI_COLORS['link_blue'], 'fontSize': '10px', 'textDecoration': 'underline'}),
                     create_attribution_link("Road data courtesy of ", "PortlandMaps Open Data", "https://gis-pdx.opendata.arcgis.com/"),
                         html.Div("Map via © ", style={'display': 'inline', 'fontSize': '10px', 'color': UI_COLORS['text_gray']}),
                         html.A("Carto", href="https://carto.com/about-carto/", target="_blank",

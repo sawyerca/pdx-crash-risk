@@ -55,14 +55,14 @@ Traffic crashes in Portland result in dozens of fatalities and many more injurie
 
 ---
 
-### Test Set Metrics (2024 Hold-out Data)
+### Test Set Performance (2023 Hold-out Data)
 
 | Metric | Value | Interpretation for Crash Risk Prediction |
 |--------|-------|------------------------------------------|
-| **ROC-AUC** | 0.92 | Model demonstrates excellent discriminative ability between crash and non-crash segment-hours; ranks 92% of crash instances higher than non-crash instances |
-| **Average Precision** | 0.69 | Strong performance given class imbalance; substantially outperforms random baseline (~0.10) and naive strategies |
-| **Lift @ Top 1%** | 10.36x | Highest-scoring 1% of segment-hour predictions contain 10.36% of all crashes; model successfully concentrates risk in top predictions |
-| **Precision @ 50% Recall** | 0.77 | When threshold captures half of all crashes, 77% of flagged segment-hours actually experience crashes; false positive rate = 23% |
+| **ROC-AUC** | 0.938 | Model correctly ranks segment-hours by crash risk 93.8% of the time, excellent discrimination ability for identifying relative risk levels |
+| **Average Precision** | 0.815 | Strong ranking quality across all percentiles, substantially outperforms baseline and indicates reliable risk ordering for visualization |
+| **Lift @ Top 1%** | 5.86x | Highest-risk 1% of predictions contain nearly 6x more crashes than average, model successfully concentrates risk in top-scored segments |
+| **Precision @ 75% Recall** | 75.3% | When configured to catch 75% of crashes, model maintains 75% precision |
 
 ---
 
@@ -78,6 +78,11 @@ pdx-crash-risk/
 │   ├── callbacks.py               # Interactive functionality
 │   ├── bg_updater.py              # Background refresh system
 │   └── config.py                  # Configuration & styling
+├── raw_data/                      # Raw datasets for processing
+│   ├── crashes_1.csv              # Portland metro crash data (2007-2022)
+│   ├── crashes_2.csv              # Oregon crash data (2019-2024)
+│   ├── streets.geojson            # Road network geometry and data
+│   └── weather.csv                # Full weather data for 2007-2024
 ├── data/                          # Processed datasets
 │   ├── id_lookup.csv              # Weather station id lookup
 │   ├── segment_stats.parquet      # Historical crash stats for road segments
@@ -86,13 +91,10 @@ pdx-crash-risk/
 │   └── crash_model.pkl            # Final serialized crash prediction model
 ├── training/                      # ML-ready training data
 │   ├── ml_input_data.parquet      # Final training/test data for model
-│   ├── model_training.py          # XGBoost training pipeline
+│   ├── model_training.py          # XGBoost training file
 │   └── model_comparison.py        # Test file for comparing model performance
 └── wrangling/                     # Initial data processing and engineering
     ├── initial_processing.R       # Feature engineering and model data prep 
-    ├── crashes.csv                # Full set of Oregon crash data
-    ├── streets.geojson            # Road network geometry and data
-    ├── weather.csv                # Full weather data for 2019-2024
     └── street_segments.R          # Road network segmentation 
 
 
@@ -104,7 +106,7 @@ pdx-crash-risk/
 ## Data Sources
 
 - **Weather:** [Open-Meteo.com](https://open-meteo.com)
-- **Crashes:** [ODOT Traffic Crash Reporting](https://tvc.odot.state.or.us/tvc/)
+- **Crashes:** [ODOT Traffic Crash Reporting](https://tvc.odot.state.or.us/tvc/) and [Oregon Metro RLIS Data](https://arcg.is/0CnjDC0)
 - **Streets:** [PortlandMaps Open Data](https://gis-pdx.opendata.arcgis.com/)
 - **Maps:** © [Carto](https://carto.com/), © [OpenStreetMap](https://www.openstreetmap.org/) contributors
 

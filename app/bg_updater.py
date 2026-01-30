@@ -18,6 +18,7 @@ import logging
 import threading
 from datetime import datetime
 import pytz
+import gc
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -85,7 +86,15 @@ class BackgroundUpdater:
     def prepare_update(self):
         """Generate new predictions and prepare data structures"""
 
-        logger.info("Starting preparation phase - fetching fresh data...")
+        # Clear any stale prepared data from failed cycle
+        if self.prepared_geometry is not None:
+            logger.warning("Clearing stale data from incomplete cycle")
+            self.prepared_geometry = None
+            self.prepared_hourly_data = None
+            self.prepared_available_hours = None
+            gc.collect()
+
+        logger.info("Starting preparation phase: fetching fresh data...")
         self.update_status = "preparing"
         
         try:
@@ -93,6 +102,9 @@ class BackgroundUpdater:
                 # Clear existing cached data to force fresh generation
                 self.crash_app.cached_predictions = None
                 self.crash_app.cached_sample = None
+                
+                # Force cleanup before starting
+                gc.collect()
                 
                 # Generate new prediction data with latest weather
                 logger.info("Generating fresh predictions with current weather data")
@@ -103,6 +115,10 @@ class BackgroundUpdater:
                 geometry_dict = self.parse_geometry(new_sample)
                 hourly_dict, available_hours = self.extract_hourly_data(new_sample)
                 
+                # Clean up sample immediately after extraction
+                del new_sample
+                gc.collect()
+                
                 # Stage prepared data
                 self.prepared_geometry = geometry_dict
                 self.prepared_hourly_data = hourly_dict
@@ -111,15 +127,19 @@ class BackgroundUpdater:
                 logger.info("Preparation phase completed successfully")
                 return True
         
-        # Error handling with staging cleanup
         except Exception as e:
             logger.error(f"Preparation phase failed: {e}")
             self.set_error(f"Preparation failed: {e}")
             
-            # Clear any partially prepared data to prevent memory leaks
+            # Aggressive cleanup on error
             self.prepared_geometry = None
             self.prepared_hourly_data = None
             self.prepared_available_hours = None
+            self.crash_app.cached_predictions = None
+            self.crash_app.cached_sample = None
+            
+            # Force garbage collection
+            gc.collect()
             
             return False
     
@@ -146,7 +166,7 @@ class BackgroundUpdater:
             self.prepared_available_hours = None
             return
         
-        logger.info("Deploying fresh lightweight data structures...")
+        logger.info("Deploying fresh data...")
         
         try:
             with self.update_lock:
@@ -161,7 +181,6 @@ class BackgroundUpdater:
                 
                 # Force deletion of old data and trigger garbage collection
                 del old_geometry, old_hourly
-                import gc
                 gc.collect()
                 
                 # Update status tracking
@@ -169,7 +188,7 @@ class BackgroundUpdater:
                 self.update_status = "ready"
                 self.error_message = None
                 
-                logger.info("Deployment completed - users now have access to fresh data")
+                logger.info("Deployment completed")
         
         # Error handling
         except Exception as e:

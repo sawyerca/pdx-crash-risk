@@ -26,6 +26,7 @@ from predictor import load_model, CrashPredictor
 import psutil
 from shapely import wkt
 from datetime import datetime
+from flask import session
 import pytz
 import numpy as np
 from config import get_deck_color, MAP_CONFIG
@@ -530,8 +531,28 @@ crash_app = CrashRiskApp()
 
 # ================= CALLBACK REGISTRATION =================
 
-def register_callbacks(app):
+def register_callbacks(app, visitor_stats):
     """Register all dashboard callbacks for interactive functionality"""
+    
+    @app.callback(
+        Output('page-load-tracker', 'data-visits'),
+        [Input('page-load-tracker', 'id')]
+    )
+    def track_visitor(_):
+        """Track unique visitors using Flask sessions"""
+        
+        # Initialize session if needed
+        if 'session_id' not in session:
+            import secrets
+            session['session_id'] = secrets.token_hex(16)
+        
+        # Record this visitor
+        visitor_stats['unique_sessions'].add(session['session_id'])
+        visitor_stats['visit_timestamps'].append(
+            datetime.now(pytz.timezone('America/Los_Angeles'))
+        )
+    
+        return None
     
     @app.callback(
         [Output('hour-slider', 'marks'),

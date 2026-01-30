@@ -113,12 +113,29 @@ def optimize_dtypes(df):
 class WeatherClient:
     """Handles weather data fetching from Open-Meteo API"""
     
+    # Add timeout constants
+    CONNECT_TIMEOUT = 10 
+    READ_TIMEOUT = 30    
+    
     def __init__(self):
         """Initialize weather client with API configuration and caching"""
-
-        retry_session = retry(requests.Session(), retries=3, backoff_factor=0.2)
+        
+        # Create session with timeout configured
+        session = requests.Session()
+        
+        # Configure retry with backoff 
+        retry_session = retry(
+            session, 
+            retries=3, 
+            backoff_factor=0.2
+        )
+        
+        # Create Open-Meteo client with retry-enabled session
         self.openmeteo = openmeteo_requests.Client(session=retry_session)
         self.url = "https://api.open-meteo.com/v1/forecast"
+        
+        # Store timeout tuple for requests
+        self.timeout = (self.CONNECT_TIMEOUT, self.READ_TIMEOUT)
     
     def fetch_all_stations(self, id_lookup):
         """Fetch weather data for all weather stations with error handling"""
@@ -142,6 +159,9 @@ class WeatherClient:
                 # Log failures but continue processing other stations
                 failed_stations.append(station['location_id'])
                 logger.warning(f"Failed station {station['location_id']}: {e}")
+
+                # Garbage collection
+                gc.collect()
         
         # Ensure at least some weather data was retrieved
         if not successful_data:
@@ -155,6 +175,12 @@ class WeatherClient:
             logger.info(f"Creating fallback data for {len(failed_stations)} failed stations")
             fallback_data = self.create_fallback_weather(combined_weather, failed_stations)
             combined_weather = pd.concat([combined_weather, fallback_data], ignore_index=True)
+
+        # Clean up intermediate data
+        del successful_data
+        if failed_stations:
+            del fallback_data
+        gc.collect()
         
         # Apply memory optimizations immediately after data collection
         return optimize_dtypes(combined_weather)
@@ -180,7 +206,8 @@ class WeatherClient:
                 "end_hour": end_time.strftime('%Y-%m-%dT%H:00'),
                 "wind_speed_unit": "mph",          
                 "temperature_unit": "fahrenheit", 
-                "precipitation_unit": "inch",   
+                "precipitation_unit": "inch", 
+                "timeout": self.timeout  
             }
             
             # Execute API request 
@@ -221,6 +248,12 @@ class WeatherClient:
             return df
         
         # Error handling
+        except requests.exceptions.Timeout as e:
+            raise RuntimeError(f"Timeout for station {location_id}: {e}")
+        except requests.exceptions.ReadTimeout as e:
+            raise RuntimeError(f"Read timeout for station {location_id}: {e}")
+        except requests.exceptions.ConnectTimeout as e:
+            raise RuntimeError(f"Connection timeout for station {location_id}: {e}")
         except (requests.exceptions.ConnectionError, NewConnectionError, MaxRetryError) as e:
             raise RuntimeError(f"Network error for station {location_id}: {e}")
         except requests.exceptions.HTTPError as e:

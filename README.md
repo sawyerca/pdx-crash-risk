@@ -11,7 +11,7 @@ An interactive machine learning system that predicts hourly crash risk for every
 
 ## Objective 
 
-Traffic crashes in Portland result in dozens of fatalities and many more injuries each year. The aim of this project is to predict *where* and *when* crashes are most likely to occur using readily available data like:
+Traffic crashes in Portland result in dozens of fatalities and many more injuries each year. The aim of this project is to predict the relative crash risk of road segments using readily available data like:
 
 - Weather conditions
 - Date and time

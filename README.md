@@ -16,6 +16,7 @@ Traffic crashes in Portland result in dozens of fatalities and many more injurie
 - Weather conditions
 - Date and time
 - Historical crash locations
+- Road Characteristics
 
 ---
 

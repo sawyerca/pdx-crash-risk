@@ -114,8 +114,8 @@ class WeatherClient:
     """Handles weather data fetching from Open-Meteo API"""
     
     # Add timeout constants
-    CONNECT_TIMEOUT = 10 
-    READ_TIMEOUT = 30    
+    CONNECT_TIMEOUT = 8 
+    READ_TIMEOUT = 20    
     
     def __init__(self):
         """Initialize weather client with API configuration and caching"""
@@ -126,7 +126,7 @@ class WeatherClient:
         # Configure retry with backoff 
         retry_session = retry(
             session, 
-            retries=3, 
+            retries=2, 
             backoff_factor=0.2
         )
         
@@ -248,12 +248,12 @@ class WeatherClient:
             return df
         
         # Error handling
-        except requests.exceptions.Timeout as e:
-            raise RuntimeError(f"Timeout for station {location_id}: {e}")
         except requests.exceptions.ReadTimeout as e:
             raise RuntimeError(f"Read timeout for station {location_id}: {e}")
         except requests.exceptions.ConnectTimeout as e:
             raise RuntimeError(f"Connection timeout for station {location_id}: {e}")
+        except requests.exceptions.Timeout as e:
+            raise RuntimeError(f"Timeout for station {location_id}: {e}")
         except (requests.exceptions.ConnectionError, NewConnectionError, MaxRetryError) as e:
             raise RuntimeError(f"Network error for station {location_id}: {e}")
         except requests.exceptions.HTTPError as e:

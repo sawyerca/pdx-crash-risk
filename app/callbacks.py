@@ -29,9 +29,10 @@ from datetime import datetime
 from flask import session
 import pytz
 import numpy as np
-from config import get_deck_color, MAP_CONFIG
+from config import get_deck_color, MAP_CONFIG, UI_TYPOGRAPHY, UI_COLORS
 from bg_updater import BackgroundUpdater
-
+import secrets
+import json
 
 # ================= CONFIGURATION =================
 
@@ -502,7 +503,7 @@ class CrashRiskApp:
         self.data_manager.cache_hourly_data(value)
     
     def create_hour_marks(self):
-        """Generate slider marks for hour selection interface"""
+        """Generate slider marks - 5 marks always"""
         
         hours = self.get_available_hours()
         if not hours:
@@ -512,17 +513,30 @@ class CrashRiskApp:
         hours = hours[1:]  
         marks = {}
         
-        # Create formatted time labels for each available hour
-        for i in range(0, len(hours), 1):
-            time_str = pd.to_datetime(hours[i]).strftime('%-I %p')
-            marks[i] = {
-                'label': time_str,
-                'style': {
-                    'color': '#ffffff', 
-                    'fontSize': '11px',
-                    'whiteSpace': 'nowrap'  
+        if len(hours) == 0:
+            return {}
+        
+        max_index = len(hours) - 1
+        quarter_index = max_index // 4
+        middle_index = max_index // 2
+        three_quarter_index = (max_index * 3) // 4
+        
+        # Create marks for all positions (creates dots)
+        for i in range(len(hours)):
+            if i in [0, quarter_index, middle_index, three_quarter_index, max_index]:
+                # These 5 get labels
+                time_str = pd.to_datetime(hours[i]).strftime('%-I %p')
+                marks[i] = {
+                    'label': time_str,
+                    'style': {
+                        'color': '#ffffff', 
+                        'fontSize': UI_TYPOGRAPHY['xs'],
+                        'whiteSpace': 'nowrap'
+                    }
                 }
-            }
+            else:
+                # All others get empty string (shows dot, no label)
+                marks[i] = {'label': ''}
         
         return marks
 
@@ -543,7 +557,6 @@ def register_callbacks(app, visitor_stats):
         
         # Initialize session if needed
         if 'session_id' not in session:
-            import secrets
             session['session_id'] = secrets.token_hex(16)
         
         # Record this visitor
@@ -666,8 +679,94 @@ def register_callbacks(app, visitor_stats):
             end_time = (selected_dt + pd.Timedelta(hours=1)).strftime('%-I %p')
             date_part = selected_dt.strftime('%A, %B %d, %Y')
             
-            return f"Showing forecasted risks for {date_part}: {start_time} to {end_time}"
+            return f"Forecast for {date_part}: {start_time} to {end_time}"
             
         except Exception as e:
             logger.error(f"Error updating datetime display: {e}")
             return "Error loading time"
+        
+    @app.callback(
+        Output('hours-data-store', 'children'),
+        [Input('hour-slider', 'id')]
+    )
+    def store_hours_data(_):
+        """Store available hours as JSON for clientside callback"""
+        hours = crash_app.get_available_hours()
+        if not hours:
+            return json.dumps([])
+        
+        # Skip first hour per app logic
+        hours = hours[1:]
+        
+        # Format each hour as we want it displayed
+        formatted_hours = []
+        for hour in hours:
+            dt = pd.to_datetime(hour)
+            formatted_hours.append(dt.strftime('%-I %p'))
+        
+        return json.dumps(formatted_hours)
+        
+    # Clientside callback for perfect tooltip positioning
+    app.clientside_callback(
+        """
+        function(value, hoursDataJson) {
+            // Parse hours data
+            let hoursData;
+            try {
+                hoursData = JSON.parse(hoursDataJson);
+            } catch {
+                return ['', {display: 'none'}];
+            }
+            
+            if (!hoursData || hoursData.length === 0 || value === null) {
+                return ['', {display: 'none'}];
+            }
+            
+            // Get formatted time
+            const timeText = hoursData[value] || '';
+            
+            // Get slider elements
+            const handle = document.querySelector('.rc-slider-handle');
+            const sliderContainer = document.querySelector('#hour-slider').parentElement;
+            
+            if (!handle || !sliderContainer) {
+                return [timeText, {display: 'none'}];
+            }
+            
+            // Get actual rendered positions using getBoundingClientRect
+            const handleRect = handle.getBoundingClientRect();
+            const containerRect = sliderContainer.getBoundingClientRect();
+            
+            // Calculate handle center position relative to container
+            const handleCenter = handleRect.left + (handleRect.width / 2);
+            const containerLeft = containerRect.left;
+            const relativePosition = handleCenter - containerLeft;
+            
+            // Build tooltip style with pixel-perfect positioning
+            const style = {
+                position: 'absolute',
+                backgroundColor: '#0f172a',
+                color: 'white',
+                padding: '4px 8px',
+                borderRadius: '4px',
+                fontSize: '0.75rem',
+                fontWeight: '600',
+                border: '1px solid #475569',
+                pointerEvents: 'none',
+                zIndex: 2000,
+                display: 'block',
+                whiteSpace: 'nowrap',
+                bottom: '100%',
+                left: relativePosition + 'px',  // Use actual pixel position
+                transform: 'translateX(-50%)',
+                marginBottom: '8px'
+            };
+            
+            return [timeText, style];
+        }
+        """,
+        [Output('slider-tooltip', 'children'),
+        Output('slider-tooltip', 'style')],
+        [Input('hour-slider', 'value'),
+        Input('hours-data-store', 'children')]
+    )

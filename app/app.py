@@ -36,8 +36,18 @@ from stats import register_stats_endpoint
 # Initialize the Dash web application with configuration
 app = dash.Dash(
     __name__, 
-    external_stylesheets=EXTERNAL_STYLESHEETS,  # Font and styling imports from config
-    title="PDX Crash Risk"                     # Browser tab title
+    external_stylesheets=EXTERNAL_STYLESHEETS,
+    title="Portland Interactive Crash Risk Map",
+    meta_tags=[
+        {
+            "name": "description",
+            "content": "Interactive map showing predicted crash risk for the greater Portland area"
+        },
+        {
+            "name": "viewport",
+            "content": "width=device-width, initial-scale=1.0"
+        }
+    ]
 )
 
 # Expose WSGI server for production deployment (required for hosting platforms)

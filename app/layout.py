@@ -17,21 +17,9 @@
 
 from dash import dcc, html
 import dash_deck
-from config import UI_CONFIG, UI_COLORS
+from config import UI_CONFIG, UI_COLORS, UI_TYPOGRAPHY
 
 # ================= COMPONENT FUNCTIONS =================
-
-def create_attribution_link(text, link_text, url):
-    """Create data source attribution with clickable link"""
-    
-    return html.Div([
-        html.Div(text, style={'display': 'inline', 'fontSize': '10px', 'color': UI_COLORS['text_gray']}),
-        html.A(link_text, 
-               href=url, 
-               target="_blank",
-               style={'color': UI_COLORS['link_blue'], 'fontSize': '10px', 'textDecoration': 'underline'}),
-        html.Br()
-    ])
 
 def create_header():
     """Create fixed header with application title and dynamic datetime display"""
@@ -41,26 +29,29 @@ def create_header():
             # Main application title
             html.H1("Portland Crash Risk Modeling", 
                    style={
-                       'fontSize': '1.75rem',
+                       'fontSize': UI_TYPOGRAPHY['head'],
                        'fontWeight': '700',
                        'margin': '0',
-                       'color': 'white'
+                       'color': 'white',
+                       'textAlign': 'center'
                    }),
             # Dynamic subtitle showing current selection (populated by callbacks)
             html.Div(
                 "Loading...",  
                 id='selected-datetime-display',
                 style={
-                    'fontSize': '0.875rem',
+                    'fontSize': UI_TYPOGRAPHY['base'],
                     'color': UI_COLORS['text_gray'],
                     'marginTop': '0.25rem',
-                    'fontWeight': '400'
+                    'fontWeight': '400',
+                    'textAlign': 'center'
                 }
             )
         ], style={
             'maxWidth': '1200px', 
             'margin': '0 auto', 
-            'padding': '0 1.5rem'
+            'padding': '0 1.5rem',
+            'width': '100%'
             })
     ], style={
         'background': UI_COLORS['background_dark'],
@@ -78,36 +69,58 @@ def create_time_slider():
     
     return html.Div([
         html.Div([
-            # Slider header with current time display
             html.Div([
-                html.Span("Time:", style={
-                    'color': UI_COLORS['text_white'],
-                    'fontSize': '0.875rem',
-                    'fontWeight': '500',
-                    'marginRight': '1rem'
-                }),
                 # Time display updated by callbacks
                 html.Span(id='time-display', style={
                     'color': 'white',
-                    'fontSize': '0.875rem',
-                    'fontWeight': '600'
+                    'fontSize': UI_TYPOGRAPHY['lg'],
+                    'fontWeight': '700'
                 })
             ], style={
-                'marginBottom': '0.5rem',
+                'marginBottom': '0.75rem',
                 'display': 'flex',
-                'alignItems': 'center'
+                'alignItems': 'center',
+                'justifyContent': 'center',
+                'minHeight': '1.5rem'  # Keep consistent height even without "Time:" label
             }),
             
-            # Interactive hour selection slider
-            dcc.Slider(
-                id='hour-slider',
-                min=0,
-                max=25,
-                step=1,
-                value=0,
-                marks={},  # Populated dynamically by callbacks
-                tooltip=None
-            )
+            # Wrap slider + tooltip in relative container
+            html.Div([
+                
+                # Hidden div to store hours data for clientside callback
+                html.Div(id='hours-data-store', style={'display': 'none'}),
+
+                # Custom tooltip
+                html.Div(
+                    id='slider-tooltip',
+                    style={
+                        'position': 'absolute',
+                        'backgroundColor': UI_COLORS['background_dark'],
+                        'color': 'white',
+                        'padding': '4px 8px',
+                        'borderRadius': '4px',
+                        'fontSize': UI_TYPOGRAPHY['xs'],
+                        'fontWeight': '600',
+                        'border': f"1px solid {UI_COLORS['border_gray']}",
+                        'pointerEvents': 'none',
+                        'zIndex': 2000,
+                        'display': 'none',
+                        'whiteSpace': 'nowrap'
+                    }
+                ),
+                
+                # Slider
+                dcc.Slider(
+                    id='hour-slider',
+                    min=0,
+                    max=25,
+                    step=1,
+                    value=0,
+                    marks={},
+                    tooltip=None
+                )
+            ], style={'position': 'relative', 'width': '100%'})
+            
         ], style={
             'padding': '1rem 2rem',
             'maxWidth': '100%'
@@ -132,17 +145,17 @@ def create_map():
     # Legend positioning and styling
     legend_style = {
         'position': 'fixed',
-        'top': UI_CONFIG['legend_position']['top'],
+        'top': f"calc({UI_CONFIG['header_height']} + {UI_CONFIG['legend_position']['top']})",  # Add header height
         'right': UI_CONFIG['legend_position']['right'],
         'backgroundColor': UI_COLORS['background_dark'],
-        'padding': '15px',
+        'padding': UI_CONFIG['legend_padding'],          
         'borderRadius': '8px',
         'border': f"1px solid {UI_COLORS['border_gray']}",
         'color': 'white',
-        'fontSize': '12px',
+        'fontSize': UI_TYPOGRAPHY['sm'],                 
         'fontFamily': 'Inter',
         'zIndex': 1300,
-        'minWidth': '80px'
+        'minWidth': UI_CONFIG['legend_min_width']       
     }
     
     return html.Div([
@@ -160,14 +173,14 @@ def create_map():
         
         # Risk level legend overlay with gradient visualization
         html.Div([
-            html.H4("Risk Score", style={'margin': '0 0 10px 0', 'fontSize': '14px'}),
+            html.H4("Risk Score", style={'margin': '0 0 10px 0', 'fontSize': UI_TYPOGRAPHY['base']}),  
             
             # Gradient bar with numerical scale
             html.Div([
                 # Gradient bar
                 html.Div(style={
-                    'width': '30px',
-                    'height': '150px',
+                    'width': UI_CONFIG['legend_gradient_width'],     
+                    'height': UI_CONFIG['legend_gradient_height'],   
                     'background': 'linear-gradient(to top, rgba(26,29,35,0.31) 0%, rgba(100,100,0,0.45) 25%, rgba(200,200,0,0.59) 50%, rgba(255,130,0,0.72) 75%, rgba(255,0,0,0.86) 100%)', 
                     'borderRadius': '4px',
                     'marginRight': '10px',
@@ -175,14 +188,13 @@ def create_map():
                     'border': f"1px solid {UI_COLORS['border_gray']}"
                 }),
                 
-                # Numerical labels
                 html.Div([
-                    html.Div('99', style={'position': 'absolute', 'top': '-5px', 'fontSize': '11px'}),
-                    html.Div('75', style={'position': 'absolute', 'top': '32.5px', 'fontSize': '11px'}),
-                    html.Div('50', style={'position': 'absolute', 'top': '70px', 'fontSize': '11px'}),
-                    html.Div('25', style={'position': 'absolute', 'top': '107.5px', 'fontSize': '11px'}),
-                    html.Div('0', style={'position': 'absolute', 'top': '145px', 'fontSize': '11px'})  
-                ], style={'position': 'relative', 'height': '150px'})
+                    html.Div('99', style={'position': 'absolute', 'top': '-0.375rem', 'fontSize': UI_TYPOGRAPHY['xs']}),   
+                    html.Div('75', style={'position': 'absolute', 'top': '2.09375rem', 'fontSize': UI_TYPOGRAPHY['xs']}), 
+                    html.Div('50', style={'position': 'absolute', 'top': '4.5625rem', 'fontSize': UI_TYPOGRAPHY['xs']}),   
+                    html.Div('25', style={'position': 'absolute', 'top': '7.03125rem', 'fontSize': UI_TYPOGRAPHY['xs']}),
+                    html.Div('0', style={'position': 'absolute', 'top': '9.5rem', 'fontSize': UI_TYPOGRAPHY['xs']})    
+                ], style={'position': 'relative', 'height': UI_CONFIG['legend_gradient_height']})  
                 
             ], style={'display': 'flex', 'alignItems': 'flex-start'})
         ], style=legend_style),  
@@ -220,46 +232,56 @@ def create_map():
                 html.P("Map info:", style={
                     'margin': '0 0 8px 0',
                     'fontWeight': '600',
-                    'fontSize': '13px'
+                    'fontSize': UI_TYPOGRAPHY['base']
                 }),
                 # Model methodology explanation
-                html.P("This map displays predicted crash risk for Portland street segments using an XGBoost model trained on historical crash and weather data (2007-2023). Each colored line represents a street segment, with colors indicating percentile-based risk scores (0-100) from very low (dark gray) to very high (red) for the selected hour. The model predicts hourly crash occurrence probability by incorporating real-time weather conditions, temporal patterns (time of day, day of week), street characteristics, and historical crash patterns for each segment. Only segments with elevated risk above a calculated threshold (knee point) are displayed. Risk scores represent percentile rankings within this filtered population of higher-risk segments.", style={
+                html.P("This map shows predicted crash risk for Portland street segments using a machine learning model trained on historical crash, weather, and road data (2007-2023). The model generates hourly predictions by combining real-time weather conditions, time patterns, street type, and historical crash patterns for each segment. Risk scores (0-100) are percentile rankings compared to predictions across all street segments and time periods. A score of 75 means the segment's predicted crash probability is higher than 75% of all predictions the model generates. Only segments above a statistically determined threshold are displayed, filtering out most low-risk segments to highlight areas with meaningfully elevated risk.", style={
                     'margin': '0 0 8px 0',
-                    'fontSize': '11px',
+                    'fontSize': UI_TYPOGRAPHY['xs'],
                     'lineHeight': '1.4'
                 }),
             
                 # Data source attributions with external links
                 html.Div([
-                    create_attribution_link("Weather data by ", "Open-Meteo.com", "https://open-meteo.com"),
-                    html.Div("Crash data courtesy of ", style={'display': 'inline', 'fontSize': '10px', 'color': UI_COLORS['text_gray']}),
+                    html.Div("Weather data by ", style={'display': 'inline', 'fontSize': UI_TYPOGRAPHY['xs'], 'color': UI_COLORS['text_gray']}),
+                        html.A("Open-Meteo.com", href="https://open-meteo.com", target="_blank",
+                            style={'color': UI_COLORS['link_blue'], 'fontSize': UI_TYPOGRAPHY['xs'], 'textDecoration': 'underline'}),
+                    html.Br(),
+
+                    html.Div("Crash data courtesy of ", style={'display': 'inline', 'fontSize': UI_TYPOGRAPHY['xs'], 'color': UI_COLORS['text_gray']}),
                         html.A("ODOT Crash Reporting", href="https://tvc.odot.state.or.us/tvc/", target="_blank",
-                            style={'color': UI_COLORS['link_blue'], 'fontSize': '10px', 'textDecoration': 'underline'}),
-                        html.Div(" and ", style={'display': 'inline', 'fontSize': '10px', 'color': UI_COLORS['text_gray']}),
+                            style={'color': UI_COLORS['link_blue'], 'fontSize': UI_TYPOGRAPHY['xs'], 'textDecoration': 'underline'}),
+                        html.Div(" and ", style={'display': 'inline', 'fontSize': UI_TYPOGRAPHY['xs'], 'color': UI_COLORS['text_gray']}),
                         html.A("Portland Metro RLIS Data", href="https://arcg.is/0CnjDC0", target="_blank",
-                            style={'color': UI_COLORS['link_blue'], 'fontSize': '10px', 'textDecoration': 'underline'}),
-                    create_attribution_link("Road data courtesy of ", "PortlandMaps Open Data", "https://gis-pdx.opendata.arcgis.com/"),
-                        html.Div("Map via © ", style={'display': 'inline', 'fontSize': '10px', 'color': UI_COLORS['text_gray']}),
+                            style={'color': UI_COLORS['link_blue'], 'fontSize': UI_TYPOGRAPHY['xs'], 'textDecoration': 'underline'}),
+                    html.Br(),
+
+                    html.Div("Road data courtesy of ", style={'display': 'inline', 'fontSize': UI_TYPOGRAPHY['xs'], 'color': UI_COLORS['text_gray']}),
+                        html.A("PortlandMaps Open Data", href="https://gis-pdx.opendata.arcgis.com/", target="_blank",
+                            style={'color': UI_COLORS['link_blue'], 'fontSize': UI_TYPOGRAPHY['xs'], 'textDecoration': 'underline'}),
+                    html.Br(),
+
+                    html.Div("Map via © ", style={'display': 'inline', 'fontSize': UI_TYPOGRAPHY['xs'], 'color': UI_COLORS['text_gray']}),
                         html.A("Carto", href="https://carto.com/about-carto/", target="_blank",
-                            style={'color': UI_COLORS['link_blue'], 'fontSize': '10px', 'textDecoration': 'underline'}),
-                        html.Div(", © ", style={'display': 'inline', 'fontSize': '10px', 'color': UI_COLORS['text_gray']}),
-                        html.A("OpenStreetMap", href="http://www.openstreetmap.org/about/", target="_blank",
-                            style={'color': UI_COLORS['link_blue'], 'fontSize': '10px', 'textDecoration': 'underline'}),
-                        html.Div(" contributors", style={'display': 'inline', 'fontSize': '10px', 'color': UI_COLORS['text_gray']})
+                            style={'color': UI_COLORS['link_blue'], 'fontSize': UI_TYPOGRAPHY['xs'], 'textDecoration': 'underline'}),
+                        html.Div(", © ", style={'display': 'inline', 'fontSize': UI_TYPOGRAPHY['xs'], 'color': UI_COLORS['text_gray']}),
+                        html.A("OpenStreetMap", href="https://www.openstreetmap.org/about/", target="_blank",
+                            style={'color': UI_COLORS['link_blue'], 'fontSize': UI_TYPOGRAPHY['xs'], 'textDecoration': 'underline'}),
+                        html.Div(" contributors", style={'display': 'inline', 'fontSize': UI_TYPOGRAPHY['xs'], 'color': UI_COLORS['text_gray']})
 
                 ]),
                 html.Div([
-                    html.Div("Created by Sawyer Anderson", style={'fontWeight': '600', 'fontSize': '13px'}),
-                    html.Div("Source code available on ", style={'display': 'inline', 'fontSize': '12px'}),
+                    html.Div("Created by Sawyer Anderson", style={'fontWeight': '600', 'fontSize': UI_TYPOGRAPHY['sm']}),
+                    html.Div("Source code available on ", style={'display': 'inline', 'fontSize': UI_TYPOGRAPHY['xs']}),
                     html.A("Github", href="https://github.com/sawyerca/pdx-crash-risk", target="_blank",
-                           style={'color': UI_COLORS['link_blue'], 'fontSize': '12px', 'textDecoration': 'underline'})  
+                           style={'color': UI_COLORS['link_blue'], 'fontSize': UI_TYPOGRAPHY['xs'], 'textDecoration': 'underline'})  
                 ], style={'margin': '8px 0 0 0'})
 
             ],
             id='info-tooltip-content',
             style={
                 'position': 'absolute',
-                'top': '30px',
+                'top': f"calc({UI_CONFIG['info_icon_position']['top']} + 2rem)",
                 'left': '0px',
                 'backgroundColor': 'rgba(15, 23, 42, 0.95)',
                 'color': 'white',
@@ -269,6 +291,7 @@ def create_map():
                 'fontSize': '11px',
                 'fontFamily': 'Inter',
                 'width': UI_CONFIG['tooltip_width'],
+                'maxWidth': UI_CONFIG['tooltip_max_width'],
                 'backdropFilter': 'blur(10px)',
                 'boxShadow': '0 4px 12px rgba(0,0,0,0.3)',
                 'opacity': '0',
@@ -279,7 +302,7 @@ def create_map():
         ], 
         style={
             'position': 'fixed',
-            'top': UI_CONFIG['info_icon_position']['top'],
+            'top': f"calc({UI_CONFIG['header_height']} + {UI_CONFIG['info_icon_position']['top']})",  # Add header height 
             'left': UI_CONFIG['info_icon_position']['left'],
             'zIndex': 1200
         }),

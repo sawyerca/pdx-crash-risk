@@ -49,19 +49,24 @@ class BackgroundUpdater:
         self.update_status = "initializing"
         self.error_message = None
         
-        # Prepared data staging area for atomic updates (lightweight structures)
+        # Prepared data staging area for updates
         self.prepared_geometry = None
         self.prepared_hourly_data = None
         self.prepared_available_hours = None
+        
+        # Thread cancellation and result tracking
+        self._cancel_preparation = threading.Event()
+        self._prep_result = threading.Event()
+        self._prep_success = False
     
     def start(self):
         """Start the background scheduler with two-phase update process"""
 
         try:
-            # Schedule preparation phase at XX:55 (5 minutes before hour)
+            # Schedule preparation phase at XX:50 (10 minutes before hour)
             self.scheduler.add_job(
-                self.prepare_update, 
-                CronTrigger(minute=55), 
+                self.prepare_update_timeout, 
+                CronTrigger(minute=50), 
                 id='prepare', 
                 max_instances=1
             )
@@ -86,19 +91,24 @@ class BackgroundUpdater:
     def prepare_update(self):
         """Generate new predictions and prepare data structures"""
 
-        # Clear any stale prepared data from failed cycle
-        if self.prepared_geometry is not None:
-            logger.warning("Clearing stale data from incomplete cycle")
-            self.prepared_geometry = None
-            self.prepared_hourly_data = None
-            self.prepared_available_hours = None
-            gc.collect()
-
         logger.info("Starting preparation phase: fetching fresh data...")
         self.update_status = "preparing"
         
         try:
             with self.update_lock:
+                # Check cancellation before starting
+                if self._cancel_preparation.is_set():
+                    logger.info("Preparation cancelled before starting")
+                    return False
+                
+                # Clear any stale prepared data from failed cycle
+                if self.prepared_geometry is not None:
+                    logger.warning("Clearing stale data from incomplete cycle")
+                    self.prepared_geometry = None
+                    self.prepared_hourly_data = None
+                    self.prepared_available_hours = None
+                    gc.collect()
+
                 # Clear existing cached data to force fresh generation
                 self.crash_app.cached_predictions = None
                 self.crash_app.cached_sample = None
@@ -110,10 +120,32 @@ class BackgroundUpdater:
                 logger.info("Generating fresh predictions with current weather data")
                 new_sample = self.crash_app.filter_predictions()
                 
+                # Check cancellation after expensive prediction operation
+                if self._cancel_preparation.is_set():
+                    logger.info("Preparation cancelled after prediction generation")
+                    del new_sample
+                    gc.collect()
+                    return False
+                
                 # Prepare lightweight data structures for on-demand map generation
                 logger.info("Preparing lightweight data structures")
                 geometry_dict = self.parse_geometry(new_sample)
+                
+                # Check cancellation after geometry parsing
+                if self._cancel_preparation.is_set():
+                    logger.info("Preparation cancelled after geometry parsing")
+                    del new_sample, geometry_dict
+                    gc.collect()
+                    return False
+                
                 hourly_dict, available_hours = self.extract_hourly_data(new_sample)
+                
+                # Final cancellation check before staging
+                if self._cancel_preparation.is_set():
+                    logger.info("Preparation cancelled after data extraction")
+                    del new_sample, geometry_dict, hourly_dict, available_hours
+                    gc.collect()
+                    return False
                 
                 # Clean up sample immediately after extraction
                 del new_sample
@@ -207,7 +239,7 @@ class BackgroundUpdater:
         logger.info("Running full update cycle (prepare + deploy)")
         
         # Execute preparation phase
-        preparation_success = self.prepare_update()
+        preparation_success = self.prepare_update_timeout()
         
         # Only deploy if preparation succeeded and status is healthy
         if preparation_success and self.update_status != "error":
@@ -219,6 +251,70 @@ class BackgroundUpdater:
             self.prepared_geometry = None
             self.prepared_hourly_data = None
             self.prepared_available_hours = None
+
+    def cleanup_failed_preparation(self):
+        """Aggressively clean up all prepared and cached data after failed update"""
+        
+        logger.info("Cleaning up failed preparation")
+        
+        with self.update_lock:
+            # Clear all staged data
+            self.prepared_geometry = None
+            self.prepared_hourly_data = None
+            self.prepared_available_hours = None
+            
+            # Clear app caches
+            self.crash_app.cached_predictions = None
+            self.crash_app.cached_sample = None
+            
+            # Force garbage collection
+            gc.collect()
+
+    def prepare_update_timeout(self):
+        """Wrapper that runs prepare_update with 9-minute, 50-second timeout"""
+        
+        logger.info("Starting preparation")
+        
+        # Reset cancellation and result flags
+        self._cancel_preparation.clear()
+        self._prep_result.clear()
+        self._prep_success = False
+        
+        def run_preparation():
+            """Inner function to run in thread"""
+            try:
+                result = self.prepare_update()
+                self._prep_success = result
+            except Exception as e:
+                logger.error(f"Preparation thread exception: {e}")
+                self._prep_success = False
+            finally:
+                self._prep_result.set()
+        
+        # Create and start preparation thread
+        prep_thread = threading.Thread(target=run_preparation)
+        prep_thread.daemon = True
+        prep_thread.start()
+        
+        # Wait for completion (9min 50sec timeout leaves 10sec buffer before deploy)
+        completed = self._prep_result.wait(timeout=590)
+        
+        if not completed:
+            # Timeout occurred - signal thread to cancel
+            logger.error("TIMEOUT: Preparation exceeded 9 minutes")
+            self._cancel_preparation.set()
+            self.cleanup_failed_preparation()
+            self.set_error("Preparation timed out after 9 minutes")
+            return False
+        
+        # Check if preparation succeeded
+        if not self._prep_success:
+            logger.error("Preparation failed")
+            self.cleanup_failed_preparation()
+            return False
+        
+        logger.info("Preparation completed successfully")
+        return True
     
     def parse_geometry(self, filtered_predictions):
         """Parse WKT geometry strings once and cache coordinate arrays by segment_id"""

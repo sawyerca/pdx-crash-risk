@@ -77,7 +77,6 @@ def register_stats_endpoint(server, visitor_stats):
         
         # Calculate visits per day 
         days_running = max(uptime.total_seconds() / 86400, 0.1)
-        visits_per_day = total_visits / days_running
         
         # Return formatted HTML page
         return f"""

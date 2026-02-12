@@ -47,13 +47,28 @@ PERFORMANCE_CONFIG = {
 
 # UI layout and positioning constants
 UI_CONFIG = {
-    'header_height': '70px',
-    'sidebar_width': '350px',              # For future sidebar implementation
-    'legend_position': {'top': '35px', 'right': '20px'},
-    'info_icon_position': {'top': '80px', 'left': '10px'},
-    'slider_position': {'bottom': '20px'},
-    'notification_position': {'bottom': '150px', 'right': '20px'},
-    'tooltip_width': '500px'
+    'header_height': '70px',  
+    'sidebar_width': '350px',  # Future use 
+    'legend_position': {'top': '2rem', 'right': '1rem'},  # Relative spacing
+    'info_icon_position': {'top': '1rem', 'left': '0.5rem'},  # Relative spacing
+    'slider_position': {'bottom': '1rem'},  # Relative spacing
+    'notification_position': {'bottom': '9rem', 'right': '1rem'},  # Relative spacing
+    'tooltip_width': '60vw',  # 60% of viewport width (mobile-friendly)
+    'tooltip_max_width': '500px',  # Cap at 500px on desktop
+    'legend_padding': '1rem',
+    'legend_gradient_width': '2rem',
+    'legend_gradient_height': '10rem',
+    'legend_min_width': '5rem'
+}
+
+# Typography scale using rem (scales with root font size)
+UI_TYPOGRAPHY = {
+    'xs': '0.75rem',   # 12px at default (16px base)
+    'sm': '0.875rem',  # 14px
+    'base': '1rem',    # 16px
+    'lg': '1.125rem',  # 18px
+    'xl': '1.25rem',    # 20px
+    'head': '1.75rem'    # 28px
 }
 
 # Color scheme for UI elements
@@ -129,7 +144,85 @@ INDEX_STRING = '''
                 height: 100%;
                 overflow: hidden;
             }
-            
+
+            /* Base font size that scales with viewport */
+            html {
+                font-size: 16px;  /* Desktop default */
+            }
+
+            @media (max-width: 768px) {
+                html {
+                    font-size: 14px;  /* Slightly smaller on tablets */
+                }
+            }
+
+            @media (max-width: 640px) {
+                html {
+                    font-size: 12px;  /* Smaller on phones */
+                }
+            }
+                        
+            /* Slider dots visibility based on screen size */
+
+            /* Slider marks: 5 on desktop (>=800px), 3 on mobile (<800px) */
+            @media (max-width: 799px) {
+                /* Hide quarter marks on smaller screens */
+                .rc-slider-mark-text.quarter-mark {
+                    display: none !important;
+                }
+            }
+
+            /* Slider dots visibility based on screen size */
+
+            /* Desktop (>=800px): Show all dots */
+            .rc-slider-dot {
+                display: block;
+            }
+
+            /* Mobile (<800px): Show only 5 dots for the marked positions */
+            @media (max-width: 799px) {
+                .rc-slider-dot {
+                    display: none !important;
+                }
+                /* Show dots for 5 marked positions */
+                .rc-slider-dot:nth-child(1),    /* First (index 0) */
+                .rc-slider-dot:nth-child(7),    /* Quarter (index 6) */
+                .rc-slider-dot:nth-child(13),   /* Middle (index 12) */
+                .rc-slider-dot:nth-child(19),   /* Three-quarter (index 18) */
+                .rc-slider-dot:nth-child(25) {  /* Last (index 24) */
+                    display: block !important;
+                }
+            }
+
+            /* Landscape orientation blocker for mobile */
+            @media (orientation: landscape) and (max-height: 500px){
+                /* Hide main content */
+                #react-entry-point {
+                    display: none !important;
+                }
+                
+                /* Show rotation message */
+                body::before {
+                    content: "Please rotate your device to portrait mode";
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: #0f172a;
+                    color: white;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 1.5rem;
+                    font-weight: 600;
+                    text-align: center;
+                    padding: 2rem;
+                    z-index: 99999;
+                }
+                
+            }
+
             /* Smooth fade-in animation for notifications */
             @keyframes fadeIn {
                 from { opacity: 0; transform: translateY(-10px); }

@@ -18,6 +18,7 @@ __pycache__/
 # =========================
 .Rhistory
 .RData
+.Rapp.history
 
 # =========================
 # App / Local Artifacts

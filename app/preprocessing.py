@@ -15,16 +15,11 @@
 
 # ================= IMPORTS =================
 
-import openmeteo_requests
 import pandas as pd
-from retry_requests import retry
 import pytz
 from sklearn.preprocessing import OneHotEncoder
 import numpy as np
 import logging
-import requests
-from urllib3.exceptions import NewConnectionError, MaxRetryError
-from datetime import datetime
 import gc
 from config import PERFORMANCE_CONFIG
 
@@ -110,175 +105,34 @@ def optimize_dtypes(df):
 
 # ================= WEATHER CLIENT =================
 
+WEATHER_CACHE_URL = (
+    "https://raw.githubusercontent.com/sawyerca/pdx-crash-risk"
+    "/weather-cache/weather_cache.csv"
+)
+
 class WeatherClient:
-    """Handles weather data fetching from Open-Meteo API"""
-    
-    # Add timeout constants
-    CONNECT_TIMEOUT = 8 
-    READ_TIMEOUT = 20    
-    
-    def __init__(self):
-        """Initialize weather client with API configuration and caching"""
-        
-        # Create session with timeout configured
-        session = requests.Session()
-        
-        # Configure retry with backoff 
-        retry_session = retry(
-            session, 
-            retries=2, 
-            backoff_factor=0.2
-        )
-        
-        # Create Open-Meteo client with retry-enabled session
-        self.openmeteo = openmeteo_requests.Client(session=retry_session)
-        self.url = "https://api.open-meteo.com/v1/forecast"
-        
-        # Store timeout tuple for requests
-        self.timeout = (self.CONNECT_TIMEOUT, self.READ_TIMEOUT)
-    
+    """Reads cached weather data written by the GitHub Actions fetch workflow"""
+
     def fetch_all_stations(self, id_lookup):
-        """Fetch weather data for all weather stations with error handling"""
+        """Load weather data from the GitHub-hosted CSV cache"""
 
-        logger.info(f"Fetching weather data for {len(id_lookup)} stations...")
-        
-        # Track successful and failed station requests
-        successful_data = []
-        failed_stations = []
-        
-        # Process each weather station sequentially
-        for idx, station in id_lookup.iterrows():
-            try:
-                df = self.fetch_single_station(
-                    station['latitude'], 
-                    station['longitude'], 
-                    station['location_id']
-                )
-                successful_data.append(df)
-            except Exception as e:
-                # Log failures but continue processing other stations
-                failed_stations.append(station['location_id'])
-                logger.warning(f"Failed station {station['location_id']}: {e}")
-
-                # Garbage collection
-                gc.collect()
-        
-        # Ensure at least some weather data was retrieved
-        if not successful_data:
-            raise RuntimeError("No weather data retrieved for any stations")
-        
-        # Combine all successful station data
-        combined_weather = pd.concat(successful_data, ignore_index=True)
-        
-        # Generate fallback data for failed stations using regional averages
-        if failed_stations:
-            logger.info(f"Creating fallback data for {len(failed_stations)} failed stations")
-            fallback_data = self.create_fallback_weather(combined_weather, failed_stations)
-            combined_weather = pd.concat([combined_weather, fallback_data], ignore_index=True)
-
-        # Clean up intermediate data
-        del successful_data
-        if failed_stations:
-            del fallback_data
-        gc.collect()
-        
-        # Apply memory optimizations immediately after data collection
-        return optimize_dtypes(combined_weather)
-    
-    def fetch_single_station(self, lat, lon, location_id):
-        """Fetch weather forecast data for a single weather station"""
+        logger.info("Loading weather data from cache...")
 
         try:
-            # Define forecast time window
-            now_pst = datetime.now(pytz.timezone('America/Los_Angeles'))
-            start_time = now_pst - pd.Timedelta(hours=3)   # 3 hours historical 
-            end_time = now_pst + pd.Timedelta(hours=25)    # 25 hours forecast 
-            
-            # Configure API request parameters 
-            params = {
-                "latitude": lat,
-                "longitude": lon,
-                "hourly": ["temperature_2m", "relative_humidity_2m",
-                          "rain", "snowfall", "snow_depth", "cloud_cover", 
-                          "wind_speed_10m", "wind_gusts_10m"],
-                "timezone": "America/Los_Angeles",
-                "start_hour": start_time.strftime('%Y-%m-%dT%H:00'),
-                "end_hour": end_time.strftime('%Y-%m-%dT%H:00'),
-                "wind_speed_unit": "mph",          
-                "temperature_unit": "fahrenheit", 
-                "precipitation_unit": "inch", 
-                "timeout": self.timeout  
-            }
-            
-            # Execute API request 
-            responses = self.openmeteo.weather_api(self.url, params=params)
-            
-            # Validate API response structure
-            if not responses:
-                raise RuntimeError(f"No response from API for station {location_id}")
-            
-            response = responses[0]
-            hourly = response.Hourly()
-            
-            if not hourly:
-                raise RuntimeError(f"No hourly data for station {location_id}")
-            
-            # Construct datetime index for time series data
-            hourly_data = {
-                "datetime": pd.date_range(
-                    start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
-                    end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
-                    freq=pd.Timedelta(seconds=hourly.Interval()),
-                    inclusive="left"
-                ).tz_convert('America/Los_Angeles').tz_localize(None)  # Convert to local time
-            }
-            
-            # Extract weather vars
-            weather_vars = ["temp", "humidity", "rain", "snow", "snow_depth",
-                           "cloud_cover", "wind_speed", "wind_gusts"]
-            
-            # Map API response variables to standardized column names
-            for i, var_name in enumerate(weather_vars):
-                hourly_data[var_name] = hourly.Variables(i).ValuesAsNumpy()
-            
-            # Create station-specific weather dataframe
-            df = pd.DataFrame(hourly_data)
-            df['location_id'] = location_id  # Add station identifier
-            
-            return df
-        
-        # Error handling
-        except requests.exceptions.ReadTimeout as e:
-            raise RuntimeError(f"Read timeout for station {location_id}: {e}")
-        except requests.exceptions.ConnectTimeout as e:
-            raise RuntimeError(f"Connection timeout for station {location_id}: {e}")
-        except requests.exceptions.Timeout as e:
-            raise RuntimeError(f"Timeout for station {location_id}: {e}")
-        except (requests.exceptions.ConnectionError, NewConnectionError, MaxRetryError) as e:
-            raise RuntimeError(f"Network error for station {location_id}: {e}")
-        except requests.exceptions.HTTPError as e:
-            raise RuntimeError(f"API error for station {location_id}: {e}")
+            df = pd.read_csv(WEATHER_CACHE_URL, parse_dates=['datetime'])
         except Exception as e:
-            raise RuntimeError(f"Station {location_id} failed: {e}")
-    
-    def create_fallback_weather(self, successful_weather, failed_station_ids):
-        """Create fallback weather data using regional averages for failed stations"""
+            raise RuntimeError(f"Failed to fetch weather cache: {e}")
 
-        # Ensure we have baseline data to work with
-        if successful_weather.empty:
-            raise ValueError("Cannot create fallback: no successful weather data")
-        
-        # Define core weather variables for regional averaging
-        weather_vars = ['temp', 'humidity', 'rain', 'snow', 'snow_depth', 
-                    'cloud_cover', 'wind_speed', 'wind_gusts']
-        
-        # Calculate regional weather averages across all successful stations
-        regional_avg = successful_weather.groupby('datetime')[weather_vars].mean().reset_index()
-        
-        # Generate station-specific fallback data using vectorized assign
-        fallback_dfs = [regional_avg.assign(location_id=failed_id) for failed_id in failed_station_ids]
-        
-        return pd.concat(fallback_dfs, ignore_index=True) if fallback_dfs else pd.DataFrame()
+        if df.empty:
+            raise RuntimeError("Weather cache is empty")
+
+        logger.info(
+            f"Loaded {len(df)} rows — "
+            f"{df['datetime'].nunique()} hours, "
+            f"{df['location_id'].nunique()} stations"
+        )
+
+        return df
 
 # ================= FEATURE ENGINEERING =================
 

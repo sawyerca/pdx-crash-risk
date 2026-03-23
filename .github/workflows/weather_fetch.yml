@@ -1,0 +1,43 @@
+name: Fetch Weather Cache
+
+on:
+  schedule:
+    - cron: '50 * * * *'
+  workflow_dispatch:
+
+jobs:
+  fetch-weather:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install openmeteo-requests requests-cache retry-requests pandas pytz
+
+      - name: Fetch weather data
+        run: python app/fetch_weather.py
+
+      - name: Push CSV to weather-cache branch
+        run: |
+          git config user.name "sawyerca"
+          git config user.email "sawyera@pdx.edu"
+          cp weather_cache.csv /tmp/weather_cache.csv
+          rm weather_cache.csv
+          git checkout weather-cache
+          cp /tmp/weather_cache.csv weather_cache.csv
+          git add weather_cache.csv
+          git diff --cached --quiet || git commit -m "Update weather cache"
+          git push origin weather-cache
+          git checkout main

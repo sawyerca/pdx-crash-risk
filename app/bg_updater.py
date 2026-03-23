@@ -21,6 +21,7 @@ import pytz
 import gc
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from predictor import parse_geometry, extract_hourly_data
 
 # ================= CONFIGURATION =================
 
@@ -129,7 +130,7 @@ class BackgroundUpdater:
                 
                 # Prepare lightweight data structures for on-demand map generation
                 logger.info("Preparing lightweight data structures")
-                geometry_dict = self.parse_geometry(new_sample)
+                geometry_dict = parse_geometry(new_sample)
                 
                 # Check cancellation after geometry parsing
                 if self._cancel_preparation.is_set():
@@ -138,7 +139,7 @@ class BackgroundUpdater:
                     gc.collect()
                     return False
                 
-                hourly_dict, available_hours = self.extract_hourly_data(new_sample)
+                hourly_dict, available_hours = extract_hourly_data(new_sample)
                 
                 # Final cancellation check before staging
                 if self._cancel_preparation.is_set():
@@ -315,46 +316,6 @@ class BackgroundUpdater:
         
         logger.info("Preparation completed successfully")
         return True
-    
-    def parse_geometry(self, filtered_predictions):
-        """Parse WKT geometry strings once and cache coordinate arrays by segment_id"""
-        
-        logger.info("Parsing geometry strings to coordinate arrays...")
-        
-        from shapely import wkt
-        
-        geometry_dict = {}
-        
-        # Get unique segments to avoid parsing duplicates across time periods
-        unique_segments = filtered_predictions[['segment_id', 'geometry', 'full_name']].drop_duplicates(subset='segment_id')
-        
-        for _, row in unique_segments.iterrows():
-            geom = wkt.loads(row['geometry'])
-            if geom.geom_type == 'LineString':
-                # Store coordinate array and metadata by segment_id
-                coords = [[point[0], point[1]] for point in geom.coords]
-                geometry_dict[row['segment_id']] = {
-                    'coords': coords,
-                    'full_name': row['full_name']
-                }
-        
-        return geometry_dict
-    
-    def extract_hourly_data(self, filtered_predictions):
-        """Extract hourly risk data indexed by hour"""
-        
-        logger.info("Extracting hourly risk data...")
-        
-        hourly_dict = {}
-        available_hours = sorted(filtered_predictions['datetime'].unique())
-        
-        for i, hour in enumerate(available_hours):
-            hour_data = filtered_predictions[filtered_predictions['datetime'] == hour]
-            
-            # Store only essential data: list of (segment_id, risk_score) tuples
-            hourly_dict[i] = hour_data[['segment_id', 'risk_score']].to_dict('records')
-        
-        return hourly_dict, available_hours
     
     def set_error(self, message):
         """Set error state with message for status reporting"""

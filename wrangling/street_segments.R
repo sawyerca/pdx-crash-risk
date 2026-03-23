@@ -5,9 +5,9 @@
 #          nearest weather station assignments for crash prediction modeling
 # 
 # Input Files:
-#   - streets.geojson: Street centerline network data
+#   - ../raw_data/streets.geojson: Street centerline network data
 #   - ../data/id_lookup.csv: Weather station locations
-#   - crashes.csv: Traffic crash records for geographic bounds
+#   - ../raw_data/crashes_2.csv: Traffic crash records for geographic bounds
 #
 # Output:
 #   - ../data/street_seg.parquet: Segmented street network with weather linkages
@@ -20,11 +20,12 @@ library(sf)
 library(janitor)
 library(data.table)
 library(RANN)
+library(lwgeom)
 
 # ================= LOAD AND CLASSIFY ROAD DATA =================
 
 # Load streets and simplify road type classifications
-streets <- st_read("streets.geojson") %>%
+streets <- st_read("../raw_data/streets.geojson") %>%
   clean_names() %>%
   select(full_name, type, geometry, length) %>%
   mutate(
@@ -46,7 +47,7 @@ id_lookup <- fread("../data/id_lookup.csv", encoding = "UTF-8") %>%
   clean_names()
 
 # Load crash data to define geographic study area bounds
-crashes <- fread("crashes.csv", encoding = "UTF-8") %>% clean_names()
+crashes <- fread("../raw_data/crashes_2.csv", encoding = "UTF-8") %>% clean_names()
 
 # ================= SEGMENT ALL STREETS =================
 

@@ -17,6 +17,7 @@
 import pickle
 import logging
 import pandas as pd
+from shapely import wkt
 
 # ================= CONFIGURATION =================
 
@@ -121,4 +122,46 @@ class CrashPredictor:
         final_predictions = pd.concat(all_predictions, ignore_index=True)
         
         return final_predictions
+
+
+# ================= GEOMETRY & HOURLY DATA UTILITIES =================
+
+def parse_geometry(filtered_predictions):
+    """Parse WKT geometry strings to coordinate arrays indexed by segment_id"""
+
+    logger.info("Parsing geometry strings to coordinate arrays...")
+
+    geometry_dict = {}
+
+    # Get unique segments to avoid parsing duplicates across time periods
+    unique_segments = filtered_predictions[['segment_id', 'geometry', 'full_name']].drop_duplicates(subset='segment_id')
+
+    for _, row in unique_segments.iterrows():
+        geom = wkt.loads(row['geometry'])
+        if geom.geom_type == 'LineString':
+            coords = [[point[0], point[1]] for point in geom.coords]
+            geometry_dict[row['segment_id']] = {
+                'coords': coords,
+                'full_name': row['full_name']
+            }
+
+    logger.info(f"Parsed {len(geometry_dict)} unique segments")
+
+    return geometry_dict
+
+
+def extract_hourly_data(filtered_predictions):
+    """Extract hourly risk data indexed by position, skipping the first hour for slider alignment"""
+
+    logger.info("Extracting hourly risk data...")
+
+    hourly_dict = {}
+    available_hours = sorted(filtered_predictions['datetime'].unique())
+    display_hours = available_hours[1:]  # skip first hour for slider alignment
+
+    for i, hour in enumerate(display_hours):
+        hour_data = filtered_predictions[filtered_predictions['datetime'] == hour]
+        hourly_dict[i] = hour_data[['segment_id', 'risk_score']].to_dict('records')
+
+    return hourly_dict, available_hours
 

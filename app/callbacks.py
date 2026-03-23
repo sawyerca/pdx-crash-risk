@@ -22,14 +22,13 @@ from dash import Input, Output
 import pandas as pd
 import logging
 from preprocessing import DataPipeline, street_encode
-from predictor import load_model, CrashPredictor
+from predictor import load_model, CrashPredictor, parse_geometry, extract_hourly_data
 import psutil
-from shapely import wkt
 from datetime import datetime
 from flask import session
 import pytz
 import numpy as np
-from config import get_deck_color, MAP_CONFIG, UI_TYPOGRAPHY, UI_COLORS
+from config import MAP_CONFIG, UI_TYPOGRAPHY, DECK_COLOR_LUT
 from bg_updater import BackgroundUpdater
 import secrets
 import json
@@ -261,46 +260,6 @@ class MapRenderer:
         self.prediction_engine = prediction_engine
         self.data_manager = prediction_engine.data_manager
         
-    def parse_geometry(self, filtered_predictions):
-        """Parse WKT geometry strings once and cache coordinate arrays by segment_id"""
-        
-        logger.info("Parsing geometry strings to coordinate arrays...")
-        
-        geometry_dict = {}
-        
-        # Get unique segments to avoid parsing duplicates across time periods
-        unique_segments = filtered_predictions[['segment_id', 'geometry', 'full_name']].drop_duplicates(subset='segment_id')
-        
-        for _, row in unique_segments.iterrows():
-            geom = wkt.loads(row['geometry'])
-            if geom.geom_type == 'LineString':
-                # Store coordinate array and metadata by segment_id
-                coords = [[point[0], point[1]] for point in geom.coords]
-                geometry_dict[row['segment_id']] = {
-                    'coords': coords,
-                    'full_name': row['full_name']
-                }
-        
-        logger.info(f"Parsed {len(geometry_dict)} unique segments")
-        
-        return geometry_dict
-    
-    def extract_hourly_data(self, filtered_predictions):
-        """Extract hourly risk data indexed by hour"""
-        
-        logger.info("Extracting hourly risk data...")
-        
-        hourly_dict = {}
-        available_hours = sorted(filtered_predictions['datetime'].unique())
-        
-        for i, hour in enumerate(available_hours):
-            hour_data = filtered_predictions[filtered_predictions['datetime'] == hour]
-            
-            # Store only essential data: list of (segment_id, risk_score) tuples
-            hourly_dict[i] = hour_data[['segment_id', 'risk_score']].to_dict('records')
-        
-        return hourly_dict, available_hours
-    
     def generate_map(self, hour_index):
         """Generate deck.gl map on-demand by combining cached geometry with hourly data"""
         
@@ -329,7 +288,7 @@ class MapRenderer:
             # Lookup pre-parsed geometry
             if segment_id in geometry_dict:
                 geom_info = geometry_dict[segment_id]
-                color = get_deck_color(risk_score)
+                color = DECK_COLOR_LUT[risk_score]
                 
                 deck_data.append({
                     'path': geom_info['coords'],
@@ -383,11 +342,11 @@ class MapRenderer:
         filtered_predictions = self.prediction_engine.filter_predictions()
         
         # Parse geometry once and cache
-        geometry_dict = self.parse_geometry(filtered_predictions)
+        geometry_dict = parse_geometry(filtered_predictions)
         self.data_manager.cache_parsed_geometry(geometry_dict)
-        
+
         # Extract hourly data
-        hourly_dict, available_hours = self.extract_hourly_data(filtered_predictions)
+        hourly_dict, available_hours = extract_hourly_data(filtered_predictions)
         self.data_manager.cache_hourly_data(hourly_dict)
         self.data_manager.cache_available_hours(available_hours)
         
@@ -503,41 +462,39 @@ class CrashRiskApp:
         self.data_manager.cache_hourly_data(value)
     
     def create_hour_marks(self):
-        """Generate slider marks - 5 marks always"""
-        
+        """Generate slider marks - 5 labeled marks with dots for all positions"""
+
         hours = self.get_available_hours()
         if not hours:
             return {}
-        
-        # Skip the first hour per application logic
-        hours = hours[1:]  
-        marks = {}
-        
-        if len(hours) == 0:
+
+        # Skip first hour to match extract_hourly_data and all other display logic
+        display_hours = hours[1:]
+        n = len(display_hours)
+        if n == 0:
             return {}
-        
-        max_index = len(hours) - 1
+
+        marks = {}
+        max_index = n - 1
         quarter_index = max_index // 4
         middle_index = max_index // 2
         three_quarter_index = (max_index * 3) // 4
-        
-        # Create marks for all positions (creates dots)
-        for i in range(len(hours)):
-            if i in [0, quarter_index, middle_index, three_quarter_index, max_index]:
-                # These 5 get labels
-                time_str = pd.to_datetime(hours[i]).strftime('%-I %p')
+        labeled = {0, quarter_index, middle_index, three_quarter_index, max_index}
+
+        for i in range(n):
+            if i in labeled:
+                time_str = pd.to_datetime(display_hours[i]).strftime('%-I %p')
                 marks[i] = {
                     'label': time_str,
                     'style': {
-                        'color': '#ffffff', 
+                        'color': '#ffffff',
                         'fontSize': UI_TYPOGRAPHY['xs'],
                         'whiteSpace': 'nowrap'
                     }
                 }
             else:
-                # All others get empty string (shows dot, no label)
                 marks[i] = {'label': ''}
-        
+
         return marks
 
 # Initialize the main application instance for callback registration

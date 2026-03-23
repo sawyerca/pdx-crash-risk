@@ -118,7 +118,10 @@ def get_deck_color(risk_score):
             return [r, g, b, a]
     
     # Fallback to very low color
-    return [26, 29, 35, 68] 
+    return [26, 29, 35, 68]
+
+# Precomputed color lookup table for O(1) risk score → color mapping
+DECK_COLOR_LUT = [get_deck_color(i) for i in range(101)]
 
 # ================= EXTERNAL RESOURCES =================
 

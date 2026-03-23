@@ -18,7 +18,11 @@
 import pandas as pd
 import numpy as np
 import pickle
-from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV
+import optuna
+try:
+    from optuna_integration.xgboost import XGBoostPruningCallback
+except ImportError:
+    from optuna.integration import XGBoostPruningCallback
 from sklearn.metrics import (
     roc_auc_score,
     brier_score_loss,
@@ -26,8 +30,7 @@ from sklearn.metrics import (
     precision_recall_curve,
     log_loss,
     matthews_corrcoef,
-    cohen_kappa_score,
-    make_scorer
+    cohen_kappa_score
 )
 from xgboost import XGBClassifier
 
@@ -210,10 +213,12 @@ target_cols = ['crash_occurred']
 # ================= DATA PREPARATION =================
 
 # Temporal split:
-# Training: 2007-2022
+# Training: 2007-2021
+# Validation: 2022
 # Test: 2023 
-train_df = data[data['datetime'] <= '2022-12-31'].copy()
-test_df  = data[data['datetime'].dt.year == 2023].copy()
+train_df = data[data['datetime'] <= '2021-12-31'].copy()
+val_df = data[data['datetime'].dt.year == 2022].copy()
+test_df = data[data['datetime'].dt.year == 2023].copy()
 
 # Recalculate segment statistics from training data only
 train_crashes = train_df[train_df['crash_occurred'] == 1]
@@ -222,6 +227,7 @@ segment_stats = train_crashes.groupby('segment_id').size().reset_index(name='cou
 # Get all unique segments across all time periods
 all_segments = pd.concat([
     train_df['segment_id'],
+    val_df['segment_id'],
     test_df['segment_id']
     ]).unique()
 
@@ -236,78 +242,80 @@ segment_stats = segment_stats.drop('count', axis=1)
 
 # Add historical segment features to all datasets
 train_df = train_df.merge(segment_stats, on='segment_id', how='left')
-test_df  = test_df.merge(segment_stats, on='segment_id', how='left')
+val_df = val_df.merge(segment_stats, on='segment_id', how='left')
+test_df = test_df.merge(segment_stats, on='segment_id', how='left')
 
 # Define feature columns
-exclude_cols = target_cols + ['datetime', 'segment_id', 'svrty_NA']
+exclude_cols = target_cols + ['datetime', 'segment_id']
 feature_cols = [c for c in train_df.columns if c not in exclude_cols]
 
 # Create feature matrices and target vectors for modeling
 X_train, y_train = train_df[feature_cols], train_df['crash_occurred']
-X_test, y_test   = test_df[feature_cols], test_df['crash_occurred']
+X_val, y_val = val_df[feature_cols], val_df['crash_occurred']
+X_test, y_test = test_df[feature_cols], test_df['crash_occurred']
 
-# ================= HYPERPARAMETER TUNING =================      
+# ================= HYPERPARAMETER TUNING =================
 
-# Define hyperparameter search space
-param_distributions = {
-    # Tree structure 
-    'n_estimators': [300, 500, 700, 1000],                    
-    'max_depth': [3, 4, 5, 6, 7],                           
-    'learning_rate': [0.01, 0.02, 0.03, 0.05, 0.07],          
-    
-    # Sampling 
-    'subsample': [0.6, 0.7, 0.8, 0.9],                  
-    'colsample_bytree': [0.6, 0.7, 0.8, 0.9],                
-    
-    # Regularization 
-    'min_child_weight': [25, 30, 35, 40, 50, 60],      
-    'gamma': [0.5, 1.0, 2.0, 3.0, 5.0],             
-    'reg_alpha': [1.0, 2.0, 5.0, 10.0, 15.0],             
-    'reg_lambda': [10, 15, 20, 30, 50],             
-}
+def objective(trial):
+    params = {
+        'max_depth': trial.suggest_int('max_depth', 3, 7),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.07, log=True),
+        'subsample': trial.suggest_float('subsample', 0.6, 0.9),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 0.9),
+        'min_child_weight': trial.suggest_int('min_child_weight', 25, 60),
+        'gamma': trial.suggest_float('gamma', 0.5, 5.0),
+        'reg_alpha': trial.suggest_float('reg_alpha', 1.0, 15.0),
+        'reg_lambda': trial.suggest_float('reg_lambda', 10.0, 50.0),
+        'n_estimators': 1000,
+        'early_stopping_rounds': 50,
+        'random_state': 123,
+        'n_jobs': -1,
+        'objective': 'binary:logistic',
+        'eval_metric': 'logloss'
+    }
 
-# Use time series CV 
-cv_strategy = TimeSeriesSplit(n_splits=3)
+    model = XGBClassifier(
+        **params,
+        callbacks=[XGBoostPruningCallback(trial, 'validation_0-logloss')]
+    )
+    model.fit(
+        X_train, y_train,
+        eval_set=[(X_val, y_val)],
+        verbose=False
+    )
 
-# Configure randomized search 
-random_search = RandomizedSearchCV(
-    estimator=XGBClassifier(
-        random_state=123,
-        n_jobs=-1,
-        objective='binary:logistic',
-        eval_metric='logloss'
-    ),
-    param_distributions=param_distributions,
-    n_iter=40,              
-    cv=cv_strategy,
-    scoring='average_precision',  
-    n_jobs=-1,
-    random_state=123,
-    verbose=2 
-)
-
-# Execute hyperparameter search
+    y_proba = model.predict_proba(X_val)[:, 1]
+    return average_precision_score(y_val, y_proba)
 
 print("================= STARTING HYPERPARAMETER SEARCH =================")
 
-# Calculate search space size
-space_size = np.prod([len(v) for v in param_distributions.values()])
-print(f"Search space size: {space_size:,} combinations")
+optuna.logging.set_verbosity(optuna.logging.WARNING)
+study = optuna.create_study(
+    direction='maximize',
+    sampler=optuna.samplers.TPESampler(seed=123)
+)
+study.optimize(objective, n_trials=60, show_progress_bar=True)
 
-random_search.fit(X_train, y_train, verbose=False)
-
-print("================= HYPERPARAMETER RESULTS =================")
-print(f"Best CV Score (Avg Precision): {random_search.best_score_:.4f}")
+print(f"Best Score (Avg Precision): {study.best_value:.4f}")
 print(f"\nBest Hyperparameters:")
-print(random_search.best_params_)
+print(study.best_params)
 
 # ================= INITIAL MODEL TRAINING =================
 
-print("================= TRAINING FINAL MODEL =================")
+print("================= TRAINING BEST MODEL =================")
 
-# Train final model with best hyperparameters on training set
-best_model = random_search.best_estimator_
-best_model.fit(X_train, y_train)
+best_model = XGBClassifier(
+    n_estimators=1000,
+    early_stopping_rounds=50,
+    random_state=123,
+    n_jobs=-1,
+    objective='binary:logistic',
+    eval_metric='logloss',
+    **study.best_params
+)
+best_model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+optimal_n_estimators = best_model.best_iteration + 1
+print(f"Optimal n_estimators: {optimal_n_estimators}")
 
 # ================= FEATURE IMPORTANCE ANALYSIS =================
 
@@ -326,12 +334,14 @@ print(importance_df.head(20).to_string(index=False))
 
 print("================= EVALUATION =================")
 
-# Generate predictions for both train and test sets
+print("Calculating train set metrics...")
 y_proba_train = best_model.predict_proba(X_train)[:, 1]
-y_proba_test = best_model.predict_proba(X_test)[:, 1]
+train_metrics = calculate_comprehensive_metrics(y_train, y_proba_train, label="Train")
+print_metrics_report(train_metrics, label="TRAIN SET")
 
 # Calculate comprehensive metrics for test set
 print("Calculating test set metrics...")
+y_proba_test = best_model.predict_proba(X_test)[:, 1]
 test_metrics = calculate_comprehensive_metrics(y_test, y_proba_test, label="Test")
 print_metrics_report(test_metrics, label="TEST SET")
 
@@ -339,32 +349,24 @@ print_metrics_report(test_metrics, label="TEST SET")
 
 print("================= RETRAINING ON FULL DATASET =================")
 
-# Recalculate segment statistics from all data 
+seg_stats = pd.read_parquet('../data/segment_stats.parquet')
 full_data = data.copy()
-full_crashes = full_data[full_data['crash_occurred'] == 1]
-segment_stats_full = full_crashes.groupby('segment_id').size().reset_index(name='count')
-
-# Get all unique segments
-all_segments_full = full_data['segment_id'].unique()
-
-# Create complete segment statistics table with zero-fill
-segment_stats_full = pd.DataFrame({'segment_id': all_segments_full}).merge(
-    segment_stats_full, on='segment_id', how='left'
-).fillna(0)
-
-# Engineer segment-level features from ALL crash history
-segment_stats_full['seg_log_count'] = np.log1p(segment_stats_full['count'])
-segment_stats_full = segment_stats_full.drop('count', axis=1)
-
-# Merge with full dataset
-full_data = full_data.merge(segment_stats_full, on='segment_id', how='left')
+full_data = full_data.merge(seg_stats, on='segment_id', how='left')
 
 # Create feature matrices for ALL data with updated segment stats
 X_all = full_data[feature_cols]
 y_all = full_data['crash_occurred']
 
-# Retrain model on full dataset
-best_model.fit(X_all, y_all)
+final_model = XGBClassifier(
+    n_estimators=optimal_n_estimators,
+    early_stopping_rounds=None,
+    random_state=123,
+    n_jobs=-1,
+    objective='binary:logistic',
+    eval_metric='logloss',
+    **study.best_params
+)
+final_model.fit(X_all, y_all)
 
 # ================= KNEE CUTOFF FOR SCORING =================
 
@@ -416,15 +418,12 @@ print(f"Samples above cutoff: {len(filtered_probs_ref):,} ({(all_probs >= cutoff
 
 # ================= SAVE MODEL =================
 
-# Clear the objective from the model to make it picklable
-final_model.objective = None
-
 print("================= SAVING MODEL ARTIFACT =================")
 
 # Package model components and metadata 
 model_artifact = {
     'model': final_model,
-    'best_params': random_search.best_params_,
+    'best_params': study.best_params,
     'feature_cols': feature_cols,            
     'cutoff': cutoff,  
     'filtered_probs_ref': filtered_probs_ref,

@@ -5,9 +5,9 @@
 #          and generate negative samples for crash prediction modeling
 # 
 # Input Files:
-#   - weather.csv: Hourly weather observations
+#   - ../raw_data/weather.csv: Hourly weather observations
 #   - ../data/id_lookup.csv: Weather station locations
-#   - crashes.csv: Traffic crash records
+#   - ../raw_data/crashes.csv: Traffic crash records
 #   - ../data/street_seg.parquet: Street segments set
 #
 # Output:
@@ -32,7 +32,7 @@ library(arrow)
 
 # Read and clean weather and station data
 weather <- fread(
-  "weather.csv",
+  "../raw_data/weather.csv",
   encoding = "UTF-8",
   na.strings = c("", "NA", "NULL"),
   fill = TRUE,
@@ -52,7 +52,6 @@ id_lookup <- fread(
 # Parse datetime and set timezone
 weather <- weather %>%
   mutate(datetime = ymd_hm(time)) %>%
-  mutate(datetime = with_tz(datetime, tzone = "America/Los_Angeles")) %>%
   select(-time)
 
 # Calculate 3-hour rolling precipitation by station
@@ -64,7 +63,7 @@ weather <- weather %>%
       .x = rain_inch,
       .i = datetime,
       .f = ~ sum(.x),
-      .before = dhours(3),
+      .before = dhours(2),
       .complete = FALSE
     )
   ) %>%
@@ -73,11 +72,14 @@ weather <- weather %>%
 # Simplify column names and remove unused variables
 weather <- weather %>%
   select(-weather_code_wmo_code, 
+         -precipitation_inch,
          -wind_direction_10m,
+         -sunshine_duration_s,
          -apparent_temperature_f, 
          -dew_point_2m_f, 
          -surface_pressure_h_pa,
-         -is_day) %>%
+         -is_day
+         ) %>%
   rename(
     temp = temperature_2m_f,
     humidity = relative_humidity_2m_percent,
@@ -91,9 +93,43 @@ weather <- weather %>%
 
 # ================= CRASH DATA PROCESSING =================
 
-# Read and clean crash data
-crashes <- fread(
-  "crashes.csv",
+# Read and clean first crash data
+crashes_1 <- fread(
+  "../raw_data/crashes_1.csv",
+  encoding = "UTF-8",
+  na.strings = c("", "NA", "NULL"),
+  data.table = FALSE
+) %>%
+  clean_names()
+
+# Filter to Portland and remove crashes with no location
+crashes_1 <- crashes_1 %>%
+  filter(
+    urb_area_long_nm == "Portland UA", 
+    unloct_flg == 0,
+    crash_hr_no != 99
+    ) 
+
+# Extract datetime
+crashes_1 <- crashes_1 %>%
+  mutate(
+    date_only = str_extract(crash_dt, "^\\d{4}/\\d{2}/\\d{2}"),
+    hour_str = sprintf("%02d", crash_hr_no),
+    datetime_str = paste(date_only, paste0(hour_str, ":00")),
+    datetime = ymd_hm(datetime_str, tz = "America/Los_Angeles", quiet = TRUE)
+  )
+
+# Select relevant cols
+crashes_1 <- crashes_1 %>%
+  select(lat_dd, longtd_dd, datetime) %>%
+  rename(
+    lat = lat_dd,
+    lon = longtd_dd
+  )
+
+# Read and clean second crash data
+crashes_2 <- fread(
+  "../raw_data/crashes_2.csv",
   encoding = "UTF-8",
   na.strings = c("", "NA", "NULL"),
   data.table = FALSE
@@ -101,48 +137,60 @@ crashes <- fread(
   clean_names()
 
 # Filter to Portland area and remove unusable records
-crashes <- crashes %>%
+crashes_2 <- crashes_2 %>%
   filter(
     urb_area_short_nm == "PORTLAND UA",
     unloct_flg == 0,
     crash_hr_no != 99
-  ) %>%
+  ) 
+
+# Extract datetimes
+crashes_2 <- crashes_2 %>%
   mutate(
     hour_str = sprintf("%02d", crash_hr_no),
     datetime_str = paste(crash_dt, paste0(hour_str, ":00")),
-    datetime = ymd_hm(datetime_str) %>% 
-      force_tz(tzone = "America/Los_Angeles") 
-  ) %>%
-  select(-hour_str, -datetime_str)
+    datetime = ymd_hm(datetime_str, tz = "America/Los_Angeles", quiet = TRUE) 
+  )
+
+# Select relevant cols
+crashes_2 <- crashes_2 %>%
+  select(lat_dd, longtd_dd, datetime) %>%
+  rename(
+    lat = lat_dd,
+    lon = longtd_dd
+  )
+
+# Filter out overlap and incomplete year (2024) from crashes_2
+crashes_2 <- crashes_2 %>%
+  filter(datetime > "2022-12-31 23:59:59" 
+         & datetime < "2023-12-31 23:59:59") 
+
+# Join data
+crashes <- bind_rows(crashes_1, crashes_2) %>%
+  filter(!is.na(datetime))
 
 # ================= CRASH STREET POINT ASSIGNMENT =================
 
 # Load street segments
 street_seg <- read_parquet("../data/street_seg.parquet") 
 
-# Assign each crash to nearest street segment using nearest neighbor
 assign_nearest_street <- function(crashes, street_seg) {
-  crash_mat  <- as.matrix(crashes[, c("longtd_dd", "lat_dd")])
-  street_mat <- as.matrix(street_seg[, c("lon", "lat")])
+  street_seg_sf <- street_seg %>%
+    mutate(geometry = st_as_sfc(geometry, crs = 4326)) %>%
+    st_as_sf()
   
-  nearest <- nn2(street_mat, crash_mat, k = 1)
-  idx <- nearest$nn.idx[, 1]
+  crash_sf <- st_as_sf(crashes, coords = c("lon", "lat"), crs = 4326)
   
-  crashes$type <- street_seg$type[idx]
-  crashes$location_id <- street_seg$location_id[idx]
-  crashes$segment_id <- street_seg$segment_id[idx]
+  nearest_idx <- st_nearest_feature(crash_sf, street_seg_sf)
+  
+  crashes$type        <- street_seg$type[nearest_idx]
+  crashes$location_id <- street_seg$location_id[nearest_idx]
+  crashes$segment_id  <- street_seg$segment_id[nearest_idx]
   
   crashes
 }
 
 crashes <- assign_nearest_street(crashes, street_seg)
-
-# Drop lat/lon after weather station assignment is complete
-street_seg <- street_seg %>%
-  select(-lat, -lon)
-
-# Rewrite street_seg without lat/lon
-write_parquet(street_seg, "../data/street_seg.parquet")
 
 # Create positive samples dataset
 positives <- crashes %>%
@@ -150,19 +198,9 @@ positives <- crashes %>%
   select(
     datetime,
     segment_id,
-    crash_mo_no,
-    crash_wk_day_cd,
-    crash_hr_no,
     type,
     crash_occurred,
-    crash_svrty_short_desc,
     location_id
-  )  %>%
-  rename(
-    month = crash_mo_no,
-    day = crash_wk_day_cd,
-    hour = crash_hr_no,
-    svrty = crash_svrty_short_desc
   ) 
 
 # ================= SEGMENT STATISTICS =================
@@ -197,9 +235,9 @@ write_parquet(segment_stats, "../data/segment_stats.parquet")
 set.seed(123)
 
 # Define time periods and target ratio
-time_start <- as.POSIXct("2019-01-01 00:00:00", tz = "America/Los_Angeles")
-time_end   <- as.POSIXct("2024-12-31 15:00:00", tz = "America/Los_Angeles")
-target_neg_pos_ratio <- 10  # Target 10:1 ratio
+time_start <- as.POSIXct(min(crashes$datetime))
+time_end   <- as.POSIXct(max(crashes$datetime))
+target_ratio <- 5  # Target 5:1 ratio
 
 # Add year column to positives for stratification
 positives <- positives %>%
@@ -217,7 +255,7 @@ positives_by_year <- positives %>%
     .groups = 'drop'
   ) %>%
   mutate(
-    n_negatives_needed = n_positives * target_neg_pos_ratio
+    n_negatives = n_positives * target_ratio
   )
 
 # Generate negatives separately for each year to maintain consistent ratio
@@ -226,8 +264,8 @@ negatives_list <- list()
 for (yr in positives_by_year$year) {
   
   year_info <- positives_by_year %>% filter(year == yr)
-  n_needed <- year_info$n_negatives_needed
-  n_to_generate <- ceiling(n_needed * 1.01)
+  n_needed <- year_info$n_negatives
+  n_to_generate <- ceiling(n_needed * 1.1)
   
   # Define year-specific time range
   year_start <- as.POSIXct(sprintf("%d-01-01 00:00:00", yr), tz = "America/Los_Angeles")
@@ -255,45 +293,46 @@ for (yr in positives_by_year$year) {
     select(segment_id, datetime)
   
   year_negatives <- year_negatives %>%
-    anti_join(year_positives, by = c("segment_id", "datetime"))
+    anti_join(year_positives, by = c("segment_id", "datetime")) %>%
+    distinct(segment_id, datetime, .keep_all = TRUE)
   
-  # Sample exactly the number needed
-  if (nrow(year_negatives) >= n_needed) {
-    year_negatives <- year_negatives %>% sample_n(n_needed)
+  if (nrow(year_negatives) >= as.integer(n_needed)) {
+    year_negatives <- year_negatives %>% sample_n(as.integer(n_needed))
   }
   
   negatives_list[[as.character(yr)]] <- year_negatives
 }
 
 # Combine negatives
-negatives <- bind_rows(negatives_list)
-
-# Finalize features
-negatives <- negatives %>%
-  mutate(
-    month = month(datetime),
-    day = lubridate::wday(datetime, week_start = 7),
-    hour = hour(datetime),
-    crash_occurred = 0,
-    svrty = NA
-  ) %>%
-  select(-full_name, -geometry, -year)
-
+negatives <- bind_rows(negatives_list) %>%
+  mutate(crash_occurred = 0) %>%
+  select(datetime, segment_id, type, crash_occurred, location_id)
+  
+# Drop year
 positives <- positives %>% select(-year)
 
 # ================= FINAL DATA SET CREATION =================
 
-# Combine positives and negatives, add weather features
+# Combine positives and negatives
 ml_input_data <- bind_rows(positives, negatives)
 
+# Expand date features
+ml_input_data <- ml_input_data %>%
+  mutate(
+    month = month(datetime),
+    day = wday(datetime, week_start = 7),
+    hour = hour(datetime)
+  )
+
+# Add weather features
 ml_input_data <- ml_input_data %>%
   left_join(weather, by = c("location_id", "datetime")) %>%
   select(-location_id) %>%
   filter(!is.na(temp))
 
-# Convert categoricals to factors and create dummy variables
+# Convert categoricals to factors and one hot encode
 ml_input_data <- ml_input_data %>%
-  mutate(across(c("month", "day", "hour", "type", "svrty"), as.factor))
+  mutate(across(c("month", "day", "hour", "type"), as.factor))
 
 ml_input_data <- ml_input_data %>%
   dummy_cols(remove_selected_columns = TRUE,  remove_first_dummy = FALSE) %>%

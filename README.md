@@ -1,6 +1,6 @@
 # Portland Traffic Crash Risk Prediction
 
-An interactive machine learning system that predicts hourly crash risk for every street in the Portland area, processing nearly 25M predictions daily with real-time weather integration.
+An interactive machine learning system that predicts hourly crash risk for every street in the Portland area, processing ~5M predictions per hourly forecast cycle with real-time weather integration.
 
 **Live Demo: https://pdx-crash-risk.org** 
 
@@ -36,7 +36,7 @@ Traffic crashes in Portland result in dozens of fatalities and many more injurie
 
 1. Data Pipeline: Fetches real-time weather for 25 hours across Portland weather stations
 2. Feature Engineering: Combines weather, temporal, and street characteristics
-3. Prediction: XGBoost model with custom objective function generates risk levels for each street segment
+3. Prediction: XGBoost model generates probabilistic risk scores for each street segment
 4. Risk Scoring: Percentile-based ranking within elevated-risk segments
 5. Visualization: Interactive map shows color-coded risk levels with hourly time controls
 
@@ -58,12 +58,14 @@ Traffic crashes in Portland result in dozens of fatalities and many more injurie
 
 ### Test Set Performance (2023 Hold-out Data)
 
+The following metrics were calculated using a held-out data set from all of 2023. The final deployed model was retrained on all data including 2023, therefore these metrics may not reflect the performance of the live model.
+
 | Metric | Value | Interpretation for Crash Risk Prediction |
 |--------|-------|------------------------------------------|
 | **ROC-AUC** | 0.938 | Model correctly ranks segment-hours by crash risk 93.8% of the time, excellent discrimination ability for identifying relative risk levels |
-| **Average Precision** | 0.815 | Strong ranking quality across all percentiles, substantially outperforms baseline and indicates reliable risk ordering for visualization |
-| **Lift @ Top 1%** | 5.86x | Highest-risk 1% of predictions contain nearly 6x more crashes than average, model successfully concentrates risk in top-scored segments |
-| **Precision @ 75% Recall** | 75.3% | When configured to catch 75% of crashes, model maintains 75% precision |
+| **Average Precision** | 0.810 | Strong ranking quality across all percentiles, substantially outperforms baseline and indicates reliable risk ordering for visualization |
+| **Lift @ Top 1%** | 5.88x | Highest-risk 1% of predictions contain nearly 6x more crashes than average, model successfully concentrates risk in top-scored segments |
+| **Precision @ 75% Recall** | 74.4% | When configured to catch 75% of crashes, model maintains 74% precision |
 
 ---
 

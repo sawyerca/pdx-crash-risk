@@ -295,7 +295,7 @@ class FeatureEngineer:
         self.enc = OneHotEncoder(
             categories=[
                 np.arange(1, 13),  # Months: 1-12
-                np.arange(1, 8),   # Days of week: 1-7 (Monday=1, Sunday=7)
+                np.arange(1, 8),   # Days of week: 1-7 (Sunday = 1)
                 np.arange(0, 24)   # Hours: 0-23 
             ],
             sparse_output=False,
